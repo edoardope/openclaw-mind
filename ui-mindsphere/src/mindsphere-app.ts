@@ -335,13 +335,13 @@ export class MindSphereApp extends LitElement {
       margin: 0 auto;
       display: grid;
       grid-template-columns: 1fr 120px;
-      gap: 12px;
+      gap: 40px;
       align-items: end;
     }
 
     .composerMeta {
       width: min(1100px, 100%);
-      margin: 0 auto 10px;
+      margin: 0 auto 0;
       display: flex;
       align-items: center;
       justify-content: space-between;
