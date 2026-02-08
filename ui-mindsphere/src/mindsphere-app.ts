@@ -122,11 +122,12 @@ export class MindSphereApp extends LitElement {
       display: grid;
       place-items: center;
       padding: 18px;
+      padding-bottom: 92px; /* room for fixed composer */
     }
 
     .stage {
-      width: min(1150px, 100%);
-      height: min(72vh, 740px);
+      width: min(1100px, 100%);
+      height: min(76vh, 820px);
       border: 1px solid var(--border);
       border-radius: 22px;
       background: linear-gradient(180deg, rgba(12, 16, 32, 0.65), rgba(12, 16, 32, 0.32));
@@ -135,22 +136,25 @@ export class MindSphereApp extends LitElement {
         0 0 0 1px rgba(56, 189, 248, 0.08) inset;
       overflow: hidden;
       position: relative;
-      display: grid;
-      grid-template-columns: 0.95fr 1.05fr;
-      grid-template-rows: 1fr;
     }
 
     .sphereWrap {
+      position: absolute;
+      inset: 0;
       pointer-events: none;
       display: grid;
       place-items: center;
-      opacity: 0.95;
-      border-right: 1px solid rgba(148, 163, 184, 0.10);
-      background: radial-gradient(900px 520px at 45% 40%, rgba(56, 189, 248, 0.10), transparent 62%);
+      opacity: 0.98;
+      background: radial-gradient(900px 520px at 50% 45%, rgba(56, 189, 248, 0.10), transparent 62%);
+      transition: opacity 240ms ease;
+    }
+
+    .sphereWrap.hidden {
+      opacity: 0;
     }
 
     .sphere {
-      width: min(340px, 48vw);
+      width: min(380px, 55vw);
       aspect-ratio: 1/1;
       border-radius: 999px;
       background:
@@ -211,14 +215,29 @@ export class MindSphereApp extends LitElement {
       }
     }
 
-    .right {
+    .drawer {
+      position: absolute;
+      inset: 0;
       display: grid;
-      grid-template-rows: 1fr auto;
-      min-width: 0;
+      grid-template-rows: 1fr;
+      background: rgba(5, 8, 16, 0.45);
+      backdrop-filter: blur(14px);
+      transition: opacity 220ms ease, transform 220ms ease;
+    }
+
+    .drawer.closed {
+      opacity: 0;
+      transform: translateY(6px);
+      pointer-events: none;
+    }
+
+    .drawer.open {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
     }
 
     .chat {
-      position: relative;
       padding: 22px 20px;
       display: flex;
       flex-direction: column;
@@ -300,26 +319,46 @@ export class MindSphereApp extends LitElement {
     .bubble .md pre code { background: transparent; padding: 0; }
 
     .composer {
-      border-top: 1px solid var(--border);
-      padding: 14px;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 20;
+      padding: 14px 18px;
+      border-top: 1px solid rgba(148, 163, 184, 0.16);
+      background: linear-gradient(180deg, rgba(5, 8, 16, 0.35), rgba(5, 8, 16, 0.88));
+      backdrop-filter: blur(14px);
+    }
+
+    .composerInner {
+      width: min(1100px, 100%);
+      margin: 0 auto;
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 10px;
-      background: rgba(5, 8, 16, 0.42);
-      backdrop-filter: blur(12px);
-      position: relative;
-      z-index: 3;
+      align-items: end;
+    }
+
+    .composerMeta {
+      width: min(1100px, 100%);
+      margin: 0 auto 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: rgba(148, 163, 184, 0.92);
+      font-size: 12px;
     }
 
     textarea {
       width: 100%;
       resize: none;
-      min-height: 44px;
-      max-height: 120px;
+      min-height: 46px;
+      max-height: 140px;
       padding: 11px 12px;
       border-radius: 14px;
       border: 1px solid rgba(148, 163, 184, 0.18);
-      background: rgba(2, 6, 23, 0.50);
+      background: rgba(2, 6, 23, 0.52);
       color: var(--text);
       outline: none;
       font-size: 14px;
@@ -388,17 +427,10 @@ export class MindSphereApp extends LitElement {
 
     @media (max-width: 900px) {
       .stage {
-        height: min(78vh, 860px);
-        grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr;
-      }
-      .sphereWrap {
-        border-right: none;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.10);
-        padding: 16px 0;
+        height: min(76vh, 820px);
       }
       .sphere {
-        width: min(240px, 70vw);
+        width: min(300px, 76vw);
       }
       .settings { grid-template-columns: 1fr; }
       .bubble { max-width: 100%; }
@@ -412,6 +444,8 @@ export class MindSphereApp extends LitElement {
   @state() connected = false;
   @state() hello: GatewayHelloOk | null = null;
   @state() lastError: string | null = null;
+
+  @state() chatOpen = false;
 
   @state() chatLoading = false;
   @state() chatSending = false;
@@ -598,13 +632,44 @@ export class MindSphereApp extends LitElement {
     saveSettings(this.settings);
   }
 
+  private renderSphereStatusLabel(): string | null {
+    // When the chat is closed, show a small state label inside the sphere.
+    if (this.chatOpen) {
+      return null;
+    }
+    if (this.chatSending || this.chatRunId) {
+      // If we already have deltas streaming, it's more like "thinking".
+      if (this.chatStream && this.chatStream.trim()) {
+        return "Thinking";
+      }
+      return "Working";
+    }
+    return null;
+  }
+
   render() {
+    const sphereStatus = this.renderSphereStatusLabel();
+
     return html`
       <div class="shell">
         <header>
           <div class="top">
             <div class="brand"><div class="logo"></div><span>MindSphere</span></div>
             <div class="status">
+              <button
+                class="pill"
+                style="cursor:pointer"
+                @click=${() => {
+                  this.chatOpen = !this.chatOpen;
+                  // When opening the drawer, refresh + scroll.
+                  if (this.chatOpen) {
+                    void this.refreshHistory();
+                  }
+                }}
+                title=${this.chatOpen ? "Close chat" : "Open chat"}
+              >
+                <span>${this.chatOpen ? "Hide chat" : "Show chat"}</span>
+              </button>
               <span class="pill">
                 <span class="dot ${this.connected ? "ok" : ""}"></span>
                 <span>${this.connected ? "Connected" : "Offline"}</span>
@@ -616,37 +681,23 @@ export class MindSphereApp extends LitElement {
 
         <main>
           <div class="stage">
-            <div class="sphereWrap"><div class="sphere"></div></div>
-            <div class="right">
-              ${this.renderMessages()}
-              <div class="composer">
-              <textarea
-                .value=${this.chatMessage}
-                placeholder="Scrivi a MindSphere…"
-                ?disabled=${!this.connected || this.chatSending}
-                @input=${(e: InputEvent) => {
-                  const target = e.target as HTMLTextAreaElement;
-                  this.chatMessage = target.value;
-                }}
-                @keydown=${(e: KeyboardEvent) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    void this.onSend();
-                  }
-                }}
-              ></textarea>
-              <button
-                ?disabled=${!this.connected || this.chatSending}
-                @click=${() => void this.onSend()}
-                title="Send (Ctrl/Cmd+Enter)"
-              >
-                Send
-              </button>
+            <div class="sphereWrap ${this.chatOpen ? "hidden" : ""}">
+              <div class="sphere"></div>
+              ${sphereStatus
+                ? html`<div
+                    style="position:absolute; margin-top: 420px; font-weight:800; letter-spacing:0.12em; font-size:12px; color: rgba(226,232,240,0.9); text-transform:uppercase;"
+                  >
+                    ${sphereStatus}
+                  </div>`
+                : nothing}
             </div>
+
+            <div class="drawer ${this.chatOpen ? "open" : "closed"}">
+              ${this.renderMessages()}
             </div>
           </div>
 
-          <div class="settings" style="width:min(1050px,100%); margin-top: 14px;">
+          <div class="settings" style="width:min(1100px,100%); margin-top: 14px; display:none;">
             <div class="field">
               <label>Gateway WS URL</label>
               <input
@@ -664,8 +715,41 @@ export class MindSphereApp extends LitElement {
           </div>
         </main>
 
-        <div style="padding: 12px 18px; color: rgba(148,163,184,0.9); font-size: 12px; text-align:center;">
-          <span>Tip: apri con token precompilato: <code>#token=…</code></span>
+        <div class="composer">
+          <div class="composerMeta">
+            <span>
+              ${this.chatSending || this.chatRunId
+                ? this.chatStream && this.chatStream.trim()
+                  ? "Thinking…"
+                  : "Working…"
+                : "Ready"}
+            </span>
+            <span class="mini">Ctrl/Cmd+Enter to send</span>
+          </div>
+          <div class="composerInner">
+            <textarea
+              .value=${this.chatMessage}
+              placeholder="Scrivi a MindSphere…"
+              ?disabled=${!this.connected || this.chatSending}
+              @input=${(e: InputEvent) => {
+                const target = e.target as HTMLTextAreaElement;
+                this.chatMessage = target.value;
+              }}
+              @keydown=${(e: KeyboardEvent) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  void this.onSend();
+                }
+              }}
+            ></textarea>
+            <button
+              ?disabled=${!this.connected || this.chatSending}
+              @click=${() => void this.onSend()}
+              title="Send (Ctrl/Cmd+Enter)"
+            >
+              Send
+            </button>
+          </div>
         </div>
       </div>
     `;
