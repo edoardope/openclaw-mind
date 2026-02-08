@@ -682,14 +682,14 @@ export class MindSphereApp extends LitElement {
         <main>
           <div class="stage">
             <div class="sphereWrap ${this.chatOpen ? "hidden" : ""}">
-              <div class="sphere"></div>
               ${sphereStatus
                 ? html`<div
-                    style="position:absolute; margin-top: 420px; font-weight:800; letter-spacing:0.12em; font-size:12px; color: rgba(226,232,240,0.9); text-transform:uppercase;"
+                    style="position:absolute; margin-bottom: 420px; font-weight:800; letter-spacing:0.12em; font-size:12px; color: rgba(226,232,240,0.9); text-transform:uppercase;"
                   >
                     ${sphereStatus}
                   </div>`
                 : nothing}
+              <div class="sphere"></div>
             </div>
 
             <div class="drawer ${this.chatOpen ? "open" : "closed"}">
