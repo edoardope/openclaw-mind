@@ -41,7 +41,7 @@ export class MindSphereApp extends LitElement {
     .shell {
       min-height: 100vh;
       display: grid;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto 1fr;
     }
 
     header {
@@ -119,21 +119,22 @@ export class MindSphereApp extends LitElement {
     }
 
     main {
-      display: grid;
-      place-items: center;
-      padding: 18px;
-      padding-bottom: 92px; /* room for fixed composer */
+      /* Full-bleed stage area (everything below the header, above the fixed composer). */
+      --composerH: 92px;
+      --headerH: 72px;
+
+      height: calc(100vh - var(--headerH) - var(--composerH));
+      padding: 0;
+      display: block;
     }
 
     .stage {
-      width: min(1100px, 100%);
-      height: min(76vh, 820px);
-      border: 1px solid var(--border);
-      border-radius: 22px;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      border-radius: 0;
       background: linear-gradient(180deg, rgba(12, 16, 32, 0.65), rgba(12, 16, 32, 0.32));
-      box-shadow:
-        0 30px 80px rgba(0, 0, 0, 0.45),
-        0 0 0 1px rgba(56, 189, 248, 0.08) inset;
+      box-shadow: none;
       overflow: hidden;
       position: relative;
     }
