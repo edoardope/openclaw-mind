@@ -125,7 +125,7 @@ export class MindSphereApp extends LitElement {
     }
 
     .stage {
-      width: min(1050px, 100%);
+      width: min(1150px, 100%);
       height: min(72vh, 740px);
       border: 1px solid var(--border);
       border-radius: 22px;
@@ -136,16 +136,17 @@ export class MindSphereApp extends LitElement {
       overflow: hidden;
       position: relative;
       display: grid;
-      grid-template-rows: 1fr auto;
+      grid-template-columns: 0.95fr 1.05fr;
+      grid-template-rows: 1fr;
     }
 
     .sphereWrap {
-      position: absolute;
-      inset: 0;
       pointer-events: none;
       display: grid;
       place-items: center;
       opacity: 0.95;
+      border-right: 1px solid rgba(148, 163, 184, 0.10);
+      background: radial-gradient(900px 520px at 45% 40%, rgba(56, 189, 248, 0.10), transparent 62%);
     }
 
     .sphere {
@@ -210,13 +211,20 @@ export class MindSphereApp extends LitElement {
       }
     }
 
+    .right {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      min-width: 0;
+    }
+
     .chat {
       position: relative;
-      padding: 26px 22px 14px;
+      padding: 22px 20px;
       display: flex;
       flex-direction: column;
       gap: 12px;
       overflow: auto;
+      min-width: 0;
     }
 
     .emptyHint {
@@ -378,8 +386,20 @@ export class MindSphereApp extends LitElement {
       font-size: 12px;
     }
 
-    @media (max-width: 720px) {
-      .stage { height: min(78vh, 780px); }
+    @media (max-width: 900px) {
+      .stage {
+        height: min(78vh, 860px);
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+      }
+      .sphereWrap {
+        border-right: none;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+        padding: 16px 0;
+      }
+      .sphere {
+        width: min(240px, 70vw);
+      }
       .settings { grid-template-columns: 1fr; }
       .bubble { max-width: 100%; }
     }
@@ -597,8 +617,9 @@ export class MindSphereApp extends LitElement {
         <main>
           <div class="stage">
             <div class="sphereWrap"><div class="sphere"></div></div>
-            ${this.renderMessages()}
-            <div class="composer">
+            <div class="right">
+              ${this.renderMessages()}
+              <div class="composer">
               <textarea
                 .value=${this.chatMessage}
                 placeholder="Scrivi a MindSphere…"
@@ -621,6 +642,7 @@ export class MindSphereApp extends LitElement {
               >
                 Send
               </button>
+            </div>
             </div>
           </div>
 
