@@ -5,6 +5,8 @@ import { marked } from "marked";
 
 import { GatewayBrowserClient, type GatewayEventFrame, type GatewayHelloOk } from "../../ui/src/ui/gateway.ts";
 import { extractText } from "../../ui/src/ui/chat/message-extract.ts";
+import type { CronJob } from "../../ui/src/ui/types.ts";
+import { loadCronJobs, toggleCronJob, runCronJob, type CronState } from "../../ui/src/ui/controllers/cron.ts";
 import {
   handleChatEvent,
   loadChatHistory,
@@ -223,6 +225,85 @@ export class MindSphereApp extends LitElement {
       background: rgba(5, 8, 16, 0.45);
       backdrop-filter: blur(14px);
       transition: opacity 220ms ease, transform 220ms ease;
+    }
+
+    .panel {
+      width: min(1100px, 100%);
+      margin: 0 auto;
+      height: 100%;
+      border-left: 1px solid rgba(148, 163, 184, 0.08);
+      border-right: 1px solid rgba(148, 163, 184, 0.08);
+    }
+
+    .tasksHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 16px 18px 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+      color: rgba(226, 232, 240, 0.92);
+    }
+
+    .tasksHeader .title {
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+
+    .tasksList {
+      padding: 14px 18px 18px;
+      display: grid;
+      gap: 10px;
+      overflow: auto;
+      height: calc(100% - 52px);
+    }
+
+    .taskRow {
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 16px;
+      background: rgba(2, 6, 23, 0.35);
+      padding: 12px 12px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .taskName {
+      font-weight: 800;
+    }
+
+    .taskMeta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: rgba(148, 163, 184, 0.92);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .taskActions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .tinyBtn {
+      height: 34px;
+      min-width: 0;
+      padding: 0 10px;
+      border-radius: 12px;
+      font-size: 12px;
+    }
+
+    .switch {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+      color: rgba(226, 232, 240, 0.9);
     }
 
     .drawer.closed {
@@ -448,6 +529,7 @@ export class MindSphereApp extends LitElement {
   @state() lastError: string | null = null;
 
   @state() chatOpen = false;
+  @state() tasksOpen = false;
 
   @state() chatLoading = false;
   @state() chatSending = false;
@@ -457,6 +539,11 @@ export class MindSphereApp extends LitElement {
   @state() chatRunId: string | null = null;
   @state() chatStream: string | null = null;
   @state() chatStreamStartedAt: number | null = null;
+
+  @state() cronLoading = false;
+  @state() cronJobs: CronJob[] = [];
+  @state() cronError: string | null = null;
+  @state() cronBusy = false;
 
   private booted = false;
 
@@ -495,6 +582,49 @@ export class MindSphereApp extends LitElement {
     };
   }
 
+  private toCronState(): CronState {
+    // Minimal CronState view for listing jobs.
+    return {
+      client: this.client,
+      connected: this.connected,
+      cronLoading: this.cronLoading,
+      cronJobs: this.cronJobs,
+      cronStatus: null,
+      cronError: this.cronError,
+      // unused in this UI (yet)
+      cronForm: {
+        name: "",
+        description: "",
+        agentId: "main",
+        enabled: true,
+        scheduleKind: "cron",
+        scheduleAt: "",
+        everyAmount: "",
+        everyUnit: "minutes",
+        cronExpr: "",
+        cronTz: "",
+        sessionTarget: "isolated",
+        wakeMode: "next-heartbeat",
+        payloadKind: "agentTurn",
+        payloadText: "",
+        timeoutSeconds: "",
+        deliveryMode: "none",
+        deliveryChannel: "last",
+        deliveryTo: "",
+      },
+      cronRunsJobId: null,
+      cronRuns: [],
+      cronBusy: this.cronBusy,
+    };
+  }
+
+  private syncFromCronState(next: CronState) {
+    this.cronLoading = next.cronLoading;
+    this.cronJobs = next.cronJobs;
+    this.cronError = next.cronError;
+    this.cronBusy = next.cronBusy;
+  }
+
   private syncFromChatState(next: ChatState) {
     this.chatLoading = next.chatLoading;
     this.chatMessages = next.chatMessages;
@@ -530,6 +660,10 @@ export class MindSphereApp extends LitElement {
         st.chatStreamStartedAt = null;
         this.syncFromChatState(st);
         void this.refreshHistory();
+
+        // Preload cron jobs for the tasks drawer.
+        const cron = this.toCronState();
+        void loadCronJobs(cron).then(() => this.syncFromCronState(cron));
       },
       onClose: ({ code, reason }) => {
         this.connected = false;
@@ -635,8 +769,8 @@ export class MindSphereApp extends LitElement {
   }
 
   private renderSphereStatusLabel(): string | null {
-    // When the chat is closed, show a small state label inside the sphere.
-    if (this.chatOpen) {
+    // When overlays are closed, show a small state label above the sphere.
+    if (this.chatOpen || this.tasksOpen) {
       return null;
     }
     if (this.chatSending || this.chatRunId) {
@@ -647,6 +781,113 @@ export class MindSphereApp extends LitElement {
       return "Working";
     }
     return null;
+  }
+
+  private formatCronSchedule(job: CronJob): string {
+    const s: unknown = job.schedule;
+    if (!s || typeof s !== "object") {
+      return "schedule";
+    }
+
+    const kind = (s as { kind?: unknown }).kind;
+    if (kind === "at") {
+      const at = (s as { at?: unknown }).at;
+      return `at ${typeof at === "string" ? at : ""}`.trim();
+    }
+    if (kind === "every") {
+      const everyMs = (s as { everyMs?: unknown }).everyMs;
+      return `every ${typeof everyMs === "number" ? everyMs : ""}ms`;
+    }
+    if (kind === "cron") {
+      const expr = (s as { expr?: unknown }).expr;
+      const tz = (s as { tz?: unknown }).tz;
+      return `cron ${typeof expr === "string" ? expr : ""}${typeof tz === "string" && tz ? ` (${tz})` : ""}`;
+    }
+
+    return typeof kind === "string" ? kind : "schedule";
+  }
+
+  private renderTasks() {
+    const jobs = (this.cronJobs ?? [])
+      .filter((j) => (j.agentId ?? "main") === "main")
+      .toSorted((a, b) => (b.updatedAtMs ?? 0) - (a.updatedAtMs ?? 0));
+
+    return html`
+      <div class="panel">
+        <div class="tasksHeader">
+          <div class="title">Scheduled jobs (main)</div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button
+              class="tinyBtn"
+              ?disabled=${!this.connected || this.cronLoading}
+              @click=${async () => {
+                const st = this.toCronState();
+                await loadCronJobs(st);
+                this.syncFromCronState(st);
+              }}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div class="tasksList">
+          ${this.cronError ? html`<div class="error">${this.cronError}</div>` : nothing}
+          ${this.cronLoading ? html`<div class="mini">Loading…</div>` : nothing}
+          ${!this.cronLoading && jobs.length === 0
+            ? html`<div class="mini">No cron jobs found for agent <code>main</code>.</div>`
+            : nothing}
+
+          ${jobs.map((job) => {
+            const schedule = this.formatCronSchedule(job);
+            const target = `${job.sessionTarget}${job.wakeMode ? ` · ${job.wakeMode}` : ""}`;
+            const nextRun = job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toLocaleString() : null;
+            return html`
+              <div class="taskRow">
+                <div>
+                  <div class="taskName">${job.name}</div>
+                  <div class="taskMeta">
+                    <span>${schedule}</span>
+                    <span>${target}</span>
+                    ${nextRun ? html`<span>next: ${nextRun}</span>` : nothing}
+                  </div>
+                </div>
+                <div class="taskActions">
+                  <label class="switch">
+                    <input
+                      type="checkbox"
+                      .checked=${job.enabled}
+                      ?disabled=${!this.connected || this.cronBusy}
+                      @change=${async (e: Event) => {
+                        const enabled = (e.target as HTMLInputElement).checked;
+                        const st = this.toCronState();
+                        st.cronJobs = this.cronJobs;
+                        await toggleCronJob(st, job, enabled);
+                        this.syncFromCronState(st);
+                      }}
+                    />
+                    <span>${job.enabled ? "On" : "Off"}</span>
+                  </label>
+
+                  <button
+                    class="tinyBtn"
+                    ?disabled=${!this.connected || this.cronBusy}
+                    @click=${async () => {
+                      const st = this.toCronState();
+                      st.cronJobs = this.cronJobs;
+                      await runCronJob(st, job);
+                      this.syncFromCronState(st);
+                    }}
+                    title="Run now"
+                  >
+                    Run
+                  </button>
+                </div>
+              </div>
+            `;
+          })}
+        </div>
+      </div>
+    `;
   }
 
   render() {
@@ -662,15 +903,34 @@ export class MindSphereApp extends LitElement {
                 class="pill"
                 style="cursor:pointer"
                 @click=${() => {
-                  this.chatOpen = !this.chatOpen;
-                  // When opening the drawer, refresh + scroll.
-                  if (this.chatOpen) {
+                  const next = !this.chatOpen;
+                  this.chatOpen = next;
+                  if (next) {
+                    this.tasksOpen = false;
                     void this.refreshHistory();
                   }
                 }}
                 title=${this.chatOpen ? "Close chat" : "Open chat"}
               >
                 <span>${this.chatOpen ? "Hide chat" : "Show chat"}</span>
+              </button>
+
+              <button
+                class="pill"
+                style="cursor:pointer"
+                @click=${async () => {
+                  const next = !this.tasksOpen;
+                  this.tasksOpen = next;
+                  if (next) {
+                    this.chatOpen = false;
+                    const st = this.toCronState();
+                    await loadCronJobs(st);
+                    this.syncFromCronState(st);
+                  }
+                }}
+                title=${this.tasksOpen ? "Close tasks" : "Show tasks"}
+              >
+                <span>${this.tasksOpen ? "Assign task" : "Show tasks"}</span>
               </button>
               <span class="pill">
                 <span class="dot ${this.connected ? "ok" : ""}"></span>
@@ -683,7 +943,7 @@ export class MindSphereApp extends LitElement {
 
         <main>
           <div class="stage">
-            <div class="sphereWrap ${this.chatOpen ? "hidden" : ""}">
+            <div class="sphereWrap ${(this.chatOpen || this.tasksOpen) ? "hidden" : ""}">
               ${sphereStatus
                 ? html`<div
                     style="position:absolute; margin-bottom: 420px; font-weight:800; letter-spacing:0.12em; font-size:12px; color: rgba(226,232,240,0.9); text-transform:uppercase;"
@@ -694,8 +954,12 @@ export class MindSphereApp extends LitElement {
               <div class="sphere"></div>
             </div>
 
-            <div class="drawer ${this.chatOpen ? "open" : "closed"}">
-              ${this.renderMessages()}
+            <div class="drawer ${(this.chatOpen || this.tasksOpen) ? "open" : "closed"}">
+              ${this.chatOpen
+                ? this.renderMessages()
+                : this.tasksOpen
+                  ? this.renderTasks()
+                  : nothing}
             </div>
           </div>
 
