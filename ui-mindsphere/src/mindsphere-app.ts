@@ -122,9 +122,7 @@ export class MindSphereApp extends LitElement {
       /* Full-bleed stage area (everything below the header). */
       /* We add bottom padding so content never sits under the fixed composer. */
       --composerH: 108px;
-      --headerH: 72px;
 
-      height: calc(100vh - var(--headerH));
       padding: 0 0 var(--composerH) 0;
       display: block;
     }
