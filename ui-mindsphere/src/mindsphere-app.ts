@@ -119,12 +119,13 @@ export class MindSphereApp extends LitElement {
     }
 
     main {
-      /* Full-bleed stage area (everything below the header, above the fixed composer). */
-      --composerH: 92px;
+      /* Full-bleed stage area (everything below the header). */
+      /* We add bottom padding so content never sits under the fixed composer. */
+      --composerH: 108px;
       --headerH: 72px;
 
-      height: calc(100vh - var(--headerH) - var(--composerH));
-      padding: 0;
+      height: calc(100vh - var(--headerH));
+      padding: 0 0 var(--composerH) 0;
       display: block;
     }
 
@@ -335,8 +336,8 @@ export class MindSphereApp extends LitElement {
       width: min(1100px, 100%);
       margin: 0 auto;
       display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
+      grid-template-columns: 1fr 120px;
+      gap: 12px;
       align-items: end;
     }
 
@@ -373,6 +374,7 @@ export class MindSphereApp extends LitElement {
 
     button {
       height: 44px;
+      min-width: 120px;
       padding: 0 14px;
       border-radius: 14px;
       border: 1px solid rgba(56, 189, 248, 0.30);
@@ -380,6 +382,7 @@ export class MindSphereApp extends LitElement {
       color: rgba(226, 232, 240, 0.96);
       font-weight: 700;
       cursor: pointer;
+      justify-self: end;
     }
 
     button:disabled {
