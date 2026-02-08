@@ -359,7 +359,7 @@ export class MindSphereApp extends LitElement {
 
     .bubble {
       display: inline-block;
-      max-width: 82ch;
+      max-width: 100%;
       padding: 12px 14px;
       border-radius: 16px;
       border: 1px solid var(--border);
