@@ -29,7 +29,7 @@ struct AboutSettings: View {
             }
 
             VStack(spacing: 3) {
-                Text("OpenClaw")
+                Text("MindSphere")
                     .font(.title3.bold())
                 Text("Version \(self.versionString)")
                     .foregroundStyle(.secondary)
