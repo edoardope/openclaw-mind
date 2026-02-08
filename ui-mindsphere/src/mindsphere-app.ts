@@ -930,7 +930,7 @@ export class MindSphereApp extends LitElement {
                 }}
                 title=${this.tasksOpen ? "Close tasks" : "Show tasks"}
               >
-                <span>${this.tasksOpen ? "Assign task" : "Show tasks"}</span>
+                <span>${this.tasksOpen ? "Hide tasks" : "Show tasks"}</span>
               </button>
               <span class="pill">
                 <span class="dot ${this.connected ? "ok" : ""}"></span>
