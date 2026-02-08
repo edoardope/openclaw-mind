@@ -6,7 +6,14 @@ import { marked } from "marked";
 import { GatewayBrowserClient, type GatewayEventFrame, type GatewayHelloOk } from "../../ui/src/ui/gateway.ts";
 import { extractText } from "../../ui/src/ui/chat/message-extract.ts";
 import type { CronJob } from "../../ui/src/ui/types.ts";
-import { loadCronJobs, toggleCronJob, runCronJob, type CronState } from "../../ui/src/ui/controllers/cron.ts";
+import {
+  loadCronJobs,
+  toggleCronJob,
+  runCronJob,
+  addCronJob,
+  type CronState,
+} from "../../ui/src/ui/controllers/cron.ts";
+import type { CronFormState } from "../../ui/src/ui/ui-types.ts";
 import {
   handleChatEvent,
   loadChatHistory,
@@ -243,6 +250,83 @@ export class MindSphereApp extends LitElement {
       padding: 16px 18px 10px;
       border-bottom: 1px solid rgba(148, 163, 184, 0.10);
       color: rgba(226, 232, 240, 0.92);
+    }
+
+    .modalBackdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(2, 6, 23, 0.55);
+      backdrop-filter: blur(12px);
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }
+
+    .modal {
+      width: min(720px, 100%);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 18px;
+      background: rgba(5, 8, 16, 0.92);
+      box-shadow: 0 40px 120px rgba(0, 0, 0, 0.55);
+      overflow: hidden;
+    }
+
+    .modalHeader {
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+    }
+
+    .modalHeader .title {
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+
+    .modalBody {
+      padding: 14px 16px 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .row2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .modalBody select {
+      height: 40px;
+      padding: 0 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(2, 6, 23, 0.45);
+      color: var(--text);
+      outline: none;
+      font-size: 13px;
+    }
+
+    .modalFooter {
+      padding: 12px 16px;
+      border-top: 1px solid rgba(148, 163, 184, 0.10);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .ghostBtn {
+      background: rgba(148, 163, 184, 0.10);
+      border-color: rgba(148, 163, 184, 0.18);
+    }
+
+    @media (max-width: 720px) {
+      .row2 {
+        grid-template-columns: 1fr;
+      }
     }
 
     .tasksHeader .title {
@@ -545,6 +629,28 @@ export class MindSphereApp extends LitElement {
   @state() cronError: string | null = null;
   @state() cronBusy = false;
 
+  @state() cronAddOpen = false;
+  @state() cronForm: CronFormState = {
+    name: "",
+    description: "",
+    agentId: "main",
+    enabled: true,
+    scheduleKind: "cron",
+    scheduleAt: "",
+    everyAmount: "",
+    everyUnit: "minutes",
+    cronExpr: "0 9 * * *",
+    cronTz: "Europe/Rome",
+    sessionTarget: "isolated",
+    wakeMode: "next-heartbeat",
+    payloadKind: "agentTurn",
+    payloadText: "",
+    timeoutSeconds: "",
+    deliveryMode: "none",
+    deliveryChannel: "last",
+    deliveryTo: "",
+  };
+
   private booted = false;
 
   connectedCallback(): void {
@@ -583,7 +689,7 @@ export class MindSphereApp extends LitElement {
   }
 
   private toCronState(): CronState {
-    // Minimal CronState view for listing jobs.
+    // Minimal CronState view for listing/creating jobs.
     return {
       client: this.client,
       connected: this.connected,
@@ -591,27 +697,7 @@ export class MindSphereApp extends LitElement {
       cronJobs: this.cronJobs,
       cronStatus: null,
       cronError: this.cronError,
-      // unused in this UI (yet)
-      cronForm: {
-        name: "",
-        description: "",
-        agentId: "main",
-        enabled: true,
-        scheduleKind: "cron",
-        scheduleAt: "",
-        everyAmount: "",
-        everyUnit: "minutes",
-        cronExpr: "",
-        cronTz: "",
-        sessionTarget: "isolated",
-        wakeMode: "next-heartbeat",
-        payloadKind: "agentTurn",
-        payloadText: "",
-        timeoutSeconds: "",
-        deliveryMode: "none",
-        deliveryChannel: "last",
-        deliveryTo: "",
-      },
+      cronForm: this.cronForm,
       cronRunsJobId: null,
       cronRuns: [],
       cronBusy: this.cronBusy,
@@ -623,6 +709,7 @@ export class MindSphereApp extends LitElement {
     this.cronJobs = next.cronJobs;
     this.cronError = next.cronError;
     this.cronBusy = next.cronBusy;
+    this.cronForm = next.cronForm;
   }
 
   private syncFromChatState(next: ChatState) {
@@ -807,12 +894,206 @@ export class MindSphereApp extends LitElement {
     return typeof kind === "string" ? kind : "schedule";
   }
 
+  private renderCronAddModal() {
+    if (!this.cronAddOpen) {
+      return nothing;
+    }
+
+    const form = this.cronForm;
+
+    const close = () => {
+      this.cronAddOpen = false;
+    };
+
+    const submit = async () => {
+      const st = this.toCronState();
+      // Ensure we're creating for main agent.
+      st.cronForm = { ...st.cronForm, agentId: "main" };
+      try {
+        // Use shared controller to validate/build and call cron.add
+        await addCronJob(st);
+        this.syncFromCronState(st);
+        this.cronAddOpen = false;
+      } catch (err) {
+        this.cronError = String(err);
+      }
+    };
+
+    return html`
+      <div class="modalBackdrop" @click=${close}>
+        <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="modalHeader">
+            <div class="title">Add cron job (main)</div>
+            <button class="tinyBtn ghostBtn" @click=${close}>Close</button>
+          </div>
+          <div class="modalBody">
+            ${this.cronError ? html`<div class="error">${this.cronError}</div>` : nothing}
+
+            <div class="field">
+              <label>Name</label>
+              <input
+                .value=${form.name}
+                @input=${(e: Event) => (this.cronForm = { ...form, name: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+
+            <div class="row2">
+              <div class="field">
+                <label>Schedule</label>
+                <select
+                  .value=${form.scheduleKind}
+                  @change=${(e: Event) =>
+                    (this.cronForm = {
+                      ...form,
+                      scheduleKind: (e.target as HTMLSelectElement).value as CronFormState["scheduleKind"],
+                    })}
+                >
+                  <option value="cron">cron</option>
+                  <option value="every">every</option>
+                  <option value="at">at</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Enabled</label>
+                <select
+                  .value=${form.enabled ? "on" : "off"}
+                  @change=${(e: Event) =>
+                    (this.cronForm = {
+                      ...form,
+                      enabled: (e.target as HTMLSelectElement).value === "on",
+                    })}
+                >
+                  <option value="on">on</option>
+                  <option value="off">off</option>
+                </select>
+              </div>
+            </div>
+
+            ${form.scheduleKind === "cron"
+              ? html`<div class="row2">
+                  <div class="field">
+                    <label>Cron expr</label>
+                    <input
+                      .value=${form.cronExpr}
+                      placeholder="0 9 * * *"
+                      @input=${(e: Event) =>
+                        (this.cronForm = { ...form, cronExpr: (e.target as HTMLInputElement).value })}
+                    />
+                  </div>
+                  <div class="field">
+                    <label>Timezone</label>
+                    <input
+                      .value=${form.cronTz}
+                      placeholder="Europe/Rome"
+                      @input=${(e: Event) =>
+                        (this.cronForm = { ...form, cronTz: (e.target as HTMLInputElement).value })}
+                    />
+                  </div>
+                </div>`
+              : nothing}
+
+            ${form.scheduleKind === "every"
+              ? html`<div class="row2">
+                  <div class="field">
+                    <label>Every</label>
+                    <input
+                      .value=${form.everyAmount}
+                      placeholder="15"
+                      @input=${(e: Event) =>
+                        (this.cronForm = { ...form, everyAmount: (e.target as HTMLInputElement).value })}
+                    />
+                  </div>
+                  <div class="field">
+                    <label>Unit</label>
+                    <select
+                      .value=${form.everyUnit}
+                      @change=${(e: Event) =>
+                        (this.cronForm = {
+                          ...form,
+                          everyUnit: (e.target as HTMLSelectElement).value as CronFormState["everyUnit"],
+                        })}
+                    >
+                      <option value="minutes">minutes</option>
+                      <option value="hours">hours</option>
+                      <option value="days">days</option>
+                    </select>
+                  </div>
+                </div>`
+              : nothing}
+
+            ${form.scheduleKind === "at"
+              ? html`<div class="field">
+                  <label>Run at (ISO / local parse)</label>
+                  <input
+                    .value=${form.scheduleAt}
+                    placeholder="2026-02-10T09:00:00+01:00"
+                    @input=${(e: Event) =>
+                      (this.cronForm = { ...form, scheduleAt: (e.target as HTMLInputElement).value })}
+                  />
+                </div>`
+              : nothing}
+
+            <div class="row2">
+              <div class="field">
+                <label>Payload</label>
+                <select
+                  .value=${form.payloadKind}
+                  @change=${(e: Event) =>
+                    (this.cronForm = {
+                      ...form,
+                      payloadKind: (e.target as HTMLSelectElement).value as CronFormState["payloadKind"],
+                    })}
+                >
+                  <option value="agentTurn">agentTurn</option>
+                  <option value="systemEvent">systemEvent</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Session target</label>
+                <select
+                  .value=${form.sessionTarget}
+                  @change=${(e: Event) =>
+                    (this.cronForm = {
+                      ...form,
+                      sessionTarget: (e.target as HTMLSelectElement).value as CronFormState["sessionTarget"],
+                    })}
+                >
+                  <option value="isolated">isolated</option>
+                  <option value="main">main</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>${form.payloadKind === "systemEvent" ? "System event text" : "Agent message"}</label>
+              <input
+                .value=${form.payloadText}
+                placeholder=${form.payloadKind === "systemEvent"
+                  ? "Reminder: …"
+                  : "Check my calendar and summarize"}
+                @input=${(e: Event) =>
+                  (this.cronForm = { ...form, payloadText: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+          </div>
+          <div class="modalFooter">
+            <button class="tinyBtn ghostBtn" @click=${close}>Cancel</button>
+            <button class="tinyBtn" ?disabled=${!this.connected || this.cronBusy} @click=${submit}>
+              Create
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   private renderTasks() {
     const jobs = (this.cronJobs ?? [])
       .filter((j) => (j.agentId ?? "main") === "main")
       .toSorted((a, b) => (b.updatedAtMs ?? 0) - (a.updatedAtMs ?? 0));
 
     return html`
+      ${this.renderCronAddModal()}
       <div class="panel">
         <div class="tasksHeader">
           <div class="title">Scheduled jobs (main)</div>
@@ -827,6 +1108,17 @@ export class MindSphereApp extends LitElement {
               }}
             >
               Refresh
+            </button>
+            <button
+              class="tinyBtn"
+              ?disabled=${!this.connected}
+              @click=${() => {
+                this.cronError = null;
+                this.cronAddOpen = true;
+                this.cronForm = { ...this.cronForm, agentId: "main" };
+              }}
+            >
+              Add
             </button>
           </div>
         </div>
