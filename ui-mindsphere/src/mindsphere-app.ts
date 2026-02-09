@@ -572,7 +572,7 @@ export class MindSphereApp extends LitElement {
 
     .agentEditor {
       padding: 14px 16px 70px;
-      overflow: hidden;
+      overflow: auto;
       display: grid;
       grid-template-rows: auto auto 1fr;
       gap: 12px;
