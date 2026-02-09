@@ -1118,10 +1118,12 @@ export class MindSphereApp extends LitElement {
       cfg.agents.list = Array.isArray(cfg.agents.list) ? cfg.agents.list : [];
 
       const list: any[] = cfg.agents.list;
-      const idx = list.findIndex((a) => (a?.id ?? "") === agentId);
+      let idx = list.findIndex((a) => (a?.id ?? "") === agentId);
       if (idx < 0) {
-        this.permissionsError = `Agent ${agentId} not found in config.agents.list. Create it (or reload) and retry.`;
-        return;
+        // Be helpful: allow configuring tools for agents that exist in the runtime
+        // but don't have an explicit config.agents.list entry yet (e.g. "main").
+        list.push({ id: agentId });
+        idx = list.length - 1;
       }
 
       // Normalize empty object => remove override (clean config).
