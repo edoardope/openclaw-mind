@@ -459,12 +459,17 @@ export class MindSphereApp extends LitElement {
 
     .agentEditor {
       padding: 14px 16px 18px;
-      overflow: auto;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 12px;
+      min-height: 0;
     }
 
     .agentEditor textarea {
-      min-height: 240px;
-      max-height: 48vh;
+      min-height: 0;
+      height: 100%;
+      max-height: none;
     }
 
     .seg {
@@ -1390,8 +1395,6 @@ export class MindSphereApp extends LitElement {
                 <button disabled title="Coming soon">Permissions</button>
               </div>
             </div>
-
-            <div style="height:12px"></div>
 
             <div class="row2">
               <div class="field">
