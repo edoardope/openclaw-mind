@@ -25,6 +25,20 @@ import {
 } from "../../ui/src/ui/controllers/agent-files.ts";
 
 type AgentRow = { id: string; name?: string; default?: boolean };
+
+type WindowId = "chat" | "tasks" | "agents";
+type WindowRect = { x: number; y: number; w: number; h: number };
+
+type WindowState = {
+  open: boolean;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  z: number;
+  maximized?: boolean;
+  restore?: WindowRect;
+};
 import {
   handleChatEvent,
   loadChatHistory,
@@ -147,6 +161,22 @@ export class MindSphereApp extends LitElement {
       display: block;
     }
 
+    .composerResize {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -8px;
+      height: 16px;
+      cursor: ns-resize;
+      touch-action: none;
+      background: linear-gradient(180deg, rgba(56, 189, 248, 0.0), rgba(56, 189, 248, 0.10), rgba(56, 189, 248, 0.0));
+      opacity: 0.55;
+    }
+
+    .composerResize:hover {
+      opacity: 0.9;
+    }
+
     .stage {
       width: 100%;
       height: 100%;
@@ -235,6 +265,85 @@ export class MindSphereApp extends LitElement {
       }
     }
 
+    .msWindow {
+      position: absolute;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 16px;
+      background: rgba(5, 8, 16, 0.82);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 40px 120px rgba(0, 0, 0, 0.45);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-width: 320px;
+      min-height: 240px;
+    }
+
+    .msWindowHeader {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 12px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+      background: linear-gradient(180deg, rgba(2, 6, 23, 0.35), rgba(2, 6, 23, 0.15));
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+    }
+    .msWindowHeader:active {
+      cursor: grabbing;
+    }
+
+    .msWindowTitle {
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 11px;
+      color: rgba(226, 232, 240, 0.92);
+    }
+
+    .msWindowBtns {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .msWinBtn {
+      height: 28px;
+      min-width: 28px;
+      padding: 0;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(148, 163, 184, 0.10);
+      color: rgba(226, 232, 240, 0.92);
+      font-weight: 900;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .msWindowBody {
+      min-height: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .msResizeHandle {
+      position: absolute;
+      right: 6px;
+      bottom: 6px;
+      width: 18px;
+      height: 18px;
+      border-right: 2px solid rgba(148, 163, 184, 0.50);
+      border-bottom: 2px solid rgba(148, 163, 184, 0.50);
+      border-radius: 2px;
+      cursor: nwse-resize;
+      opacity: 0.85;
+      touch-action: none;
+    }
+
     .drawer {
       position: absolute;
       inset: 0;
@@ -246,11 +355,9 @@ export class MindSphereApp extends LitElement {
     }
 
     .panel {
-      width: min(1100px, 100%);
-      margin: 0 auto;
+      width: 100%;
+      margin: 0;
       height: 100%;
-      border-left: 1px solid rgba(148, 163, 184, 0.08);
-      border-right: 1px solid rgba(148, 163, 184, 0.08);
     }
 
     .tasksHeader {
@@ -524,7 +631,9 @@ export class MindSphereApp extends LitElement {
       flex-direction: column;
       gap: 12px;
       overflow: auto;
+      overflow-x: hidden;
       min-width: 0;
+      flex: 1;
     }
 
     .emptyHint {
@@ -609,6 +718,12 @@ export class MindSphereApp extends LitElement {
       border-top: 1px solid rgba(148, 163, 184, 0.16);
       background: linear-gradient(180deg, rgba(5, 8, 16, 0.35), rgba(5, 8, 16, 0.88));
       backdrop-filter: blur(14px);
+
+      /* When composerH grows, let inner controls stretch vertically. */
+      display: grid;
+      grid-template-rows: auto 1fr;
+      align-content: start;
+      gap: 10px;
     }
 
     .composerInner {
@@ -617,7 +732,8 @@ export class MindSphereApp extends LitElement {
       display: grid;
       grid-template-columns: 1fr 120px;
       gap: 40px;
-      align-items: end;
+      align-items: stretch;
+      min-height: 0;
     }
 
     .composerMeta {
@@ -635,7 +751,8 @@ export class MindSphereApp extends LitElement {
       width: 100%;
       resize: none;
       min-height: 46px;
-      max-height: 140px;
+      /* no fixed height: allow natural sizing */
+      max-height: none;
       padding: 11px 12px;
       border-radius: 14px;
       border: 1px solid rgba(148, 163, 184, 0.18);
@@ -644,6 +761,7 @@ export class MindSphereApp extends LitElement {
       outline: none;
       font-size: 14px;
       line-height: 1.35;
+      overflow: auto;
     }
 
     textarea:focus {
@@ -662,6 +780,7 @@ export class MindSphereApp extends LitElement {
       font-weight: 700;
       cursor: pointer;
       justify-self: end;
+      align-self: end;
     }
 
     button:disabled {
@@ -728,9 +847,25 @@ export class MindSphereApp extends LitElement {
   @state() hello: GatewayHelloOk | null = null;
   @state() lastError: string | null = null;
 
-  @state() chatOpen = false;
-  @state() tasksOpen = false;
-  @state() agentsOpen = false;
+  @state() composerH = 108;
+
+  @state()
+  windows: Record<WindowId, WindowState> = {
+    chat: { open: false, x: 40, y: 40, w: 520, h: 520, z: 1 },
+    tasks: { open: false, x: 90, y: 70, w: 620, h: 520, z: 2 },
+    agents: { open: false, x: 140, y: 90, w: 860, h: 560, z: 3 },
+  };
+
+  private stageEl: HTMLElement | null = null;
+  private dragActive:
+    | null
+    | {
+        id: WindowId;
+        kind: "move" | "resize";
+        startX: number;
+        startY: number;
+        base: WindowState;
+      } = null;
 
   @state() chatLoading = false;
   @state() chatSending = false;
@@ -802,6 +937,32 @@ export class MindSphereApp extends LitElement {
     }
 
     this.connect();
+  }
+
+  protected firstUpdated(): void {
+    // Restore composer height (optional).
+    const savedH = Number(localStorage.getItem("mindsphere:composerH") ?? "");
+    if (Number.isFinite(savedH) && savedH > 0) {
+      this.composerH = savedH;
+    }
+
+    this.stageEl = this.renderRoot?.querySelector<HTMLElement>(".stage") ?? null;
+
+    // Clamp initial windows after first paint (stage has dimensions now).
+    let next = { ...this.windows };
+    (Object.keys(next) as WindowId[]).forEach((id) => {
+      next[id] = this.clampWindowToStage(id, next[id]);
+    });
+    this.windows = next;
+
+    window.addEventListener("resize", () => {
+      this.stageEl = this.renderRoot?.querySelector<HTMLElement>(".stage") ?? this.stageEl;
+      let n = { ...this.windows };
+      (Object.keys(n) as WindowId[]).forEach((id) => {
+        n[id] = this.clampWindowToStage(id, n[id]);
+      });
+      this.windows = n;
+    });
   }
 
   private toChatState(): ChatState {
@@ -1069,11 +1230,12 @@ export class MindSphereApp extends LitElement {
     saveSettings(this.settings);
   }
 
+  private anyWindowOpen(): boolean {
+    return Object.values(this.windows).some((w) => w.open);
+  }
+
   private renderSphereStatusLabel(): string | null {
-    // When overlays are closed, show a small state label above the sphere.
-    if (this.chatOpen || this.tasksOpen || this.agentsOpen) {
-      return null;
-    }
+    // Always show a small state label above the sphere (even when windows are open).
     if (this.chatSending || this.chatRunId) {
       // If we already have deltas streaming, it's more like "thinking".
       if (this.chatStream && this.chatStream.trim()) {
@@ -1082,6 +1244,175 @@ export class MindSphereApp extends LitElement {
       return "Working";
     }
     return null;
+  }
+
+  private clampWindowToStage(id: WindowId, s: WindowState): WindowState {
+    const stage = this.stageEl;
+    if (!stage) {
+      return s;
+    }
+    const r = stage.getBoundingClientRect();
+
+    // Maximized windows always fill the stage.
+    if (s.maximized) {
+      return { ...s, x: 0, y: 0, w: Math.floor(r.width), h: Math.floor(r.height) };
+    }
+
+    const minW = 320;
+    const minH = 240;
+
+    const w = Math.max(minW, Math.min(s.w, Math.max(minW, r.width)));
+    const h = Math.max(minH, Math.min(s.h, Math.max(minH, r.height)));
+
+    const maxX = Math.max(0, r.width - w);
+    const maxY = Math.max(0, r.height - h);
+
+    const x = Math.max(0, Math.min(s.x, maxX));
+    const y = Math.max(0, Math.min(s.y, maxY));
+
+    return { ...s, x, y, w, h };
+  }
+
+  private bringToFront(id: WindowId) {
+    const zTop = Math.max(...Object.values(this.windows).map((w) => w.z));
+    const cur = this.windows[id];
+    if (!cur || cur.z === zTop) {
+      return;
+    }
+    this.windows = {
+      ...this.windows,
+      [id]: { ...cur, z: zTop + 1 },
+    };
+  }
+
+  private toggleMaximizeWindow(id: WindowId) {
+    const cur = this.windows[id];
+    if (!cur) {
+      return;
+    }
+
+    const nextMax = !cur.maximized;
+    const zTop = Math.max(...Object.values(this.windows).map((w) => w.z));
+
+    if (nextMax) {
+      const restore: WindowRect = { x: cur.x, y: cur.y, w: cur.w, h: cur.h };
+      const next = this.clampWindowToStage(id, {
+        ...cur,
+        maximized: true,
+        restore,
+        z: zTop + 1,
+      });
+      this.windows = { ...this.windows, [id]: next };
+      return;
+    }
+
+    const restore = cur.restore;
+    const nextRaw: WindowState = restore
+      ? { ...cur, ...restore, maximized: false, restore: undefined, z: zTop + 1 }
+      : { ...cur, maximized: false, restore: undefined, z: zTop + 1 };
+
+    const next = this.clampWindowToStage(id, nextRaw);
+    this.windows = { ...this.windows, [id]: next };
+  }
+
+  private toggleWindow(id: WindowId) {
+    const cur = this.windows[id];
+    const nextOpen = !cur.open;
+    const zTop = Math.max(...Object.values(this.windows).map((w) => w.z));
+    const next = this.clampWindowToStage(id, {
+      ...cur,
+      open: nextOpen,
+      z: nextOpen ? zTop + 1 : cur.z,
+    });
+    this.windows = { ...this.windows, [id]: next };
+
+    if (id === "chat" && nextOpen) {
+      void this.refreshHistory();
+    }
+    if (id === "tasks" && nextOpen) {
+      const cron = this.toCronState();
+      void loadCronJobs(cron).then(() => this.syncFromCronState(cron));
+    }
+    if (id === "agents" && nextOpen) {
+      const a = this.toAgentsState();
+      void loadAgents(a).then(() => this.syncFromAgentsState(a));
+      void this.ensureAgentFilesLoaded(this.activeAgentId);
+    }
+  }
+
+  private dragRaf: number | null = null;
+  private dragPending: { id: WindowId; next: WindowState } | null = null;
+
+  private scheduleDragUpdate(id: WindowId, next: WindowState) {
+    this.dragPending = { id, next };
+    if (this.dragRaf != null) {
+      return;
+    }
+    this.dragRaf = window.requestAnimationFrame(() => {
+      this.dragRaf = null;
+      const p = this.dragPending;
+      this.dragPending = null;
+      if (!p) {
+        return;
+      }
+      this.windows = { ...this.windows, [p.id]: p.next };
+    });
+  }
+
+  private beginDrag(id: WindowId, kind: "move" | "resize", e: PointerEvent) {
+    const cur = this.windows[id];
+    if (!cur) {
+      return;
+    }
+
+    // Don't drag/resize maximized windows.
+    if (cur.maximized) {
+      return;
+    }
+
+    // Do not start drag if the pointerdown originated from a button in the header.
+    const targetEl = e.target as HTMLElement | null;
+    if (kind === "move" && targetEl && targetEl.closest("button")) {
+      return;
+    }
+
+    this.bringToFront(id);
+    e.preventDefault();
+    (e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId);
+
+    this.dragActive = {
+      id,
+      kind,
+      startX: e.clientX,
+      startY: e.clientY,
+      base: { ...cur },
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      if (!this.dragActive || this.dragActive.id !== id) {
+        return;
+      }
+      const dx = ev.clientX - this.dragActive.startX;
+      const dy = ev.clientY - this.dragActive.startY;
+
+      const base = this.dragActive.base;
+      const nextRaw: WindowState =
+        kind === "move"
+          ? { ...base, x: base.x + dx, y: base.y + dy }
+          : { ...base, w: base.w + dx, h: base.h + dy };
+
+      const next = this.clampWindowToStage(id, nextRaw);
+      this.scheduleDragUpdate(id, next);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      this.dragActive = null;
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
   }
 
   private formatCronSchedule(job: CronJob): string {
@@ -1612,6 +1943,88 @@ export class MindSphereApp extends LitElement {
     `;
   }
 
+  private beginComposerResize(e: PointerEvent) {
+    e.preventDefault();
+
+    const startY = e.clientY;
+    const baseH = this.composerH;
+
+    const minH = 84;
+    const maxH = Math.floor(window.innerHeight * 0.72);
+
+    const onMove = (ev: PointerEvent) => {
+      const dy = startY - ev.clientY; // dragging up increases height
+      const next = Math.max(minH, Math.min(maxH, baseH + dy));
+      this.composerH = next;
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      localStorage.setItem("mindsphere:composerH", String(this.composerH));
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+  }
+
+  private renderWindow(id: WindowId, title: string, body: unknown) {
+    const w = this.windows[id];
+    if (!w.open) {
+      return nothing;
+    }
+
+    const style = `left:${w.x}px; top:${w.y}px; width:${w.w}px; height:${w.h}px; z-index:${w.z};`;
+
+    return html`
+      <div
+        class="msWindow ${w.maximized ? "max" : ""}"
+        style=${style}
+        @pointerdown=${() => this.bringToFront(id)}
+      >
+        <div
+          class="msWindowHeader"
+          @pointerdown=${(e: PointerEvent) => this.beginDrag(id, "move", e)}
+          @dblclick=${(e: MouseEvent) => {
+            e.stopPropagation();
+            this.toggleMaximizeWindow(id);
+          }}
+          title="Drag to move · Double-click to maximize"
+        >
+          <div class="msWindowTitle">${title}</div>
+          <div class="msWindowBtns">
+            <button
+              class="msWinBtn"
+              title=${w.maximized ? "Restore" : "Maximize"}
+              @pointerdown=${(e: PointerEvent) => e.stopPropagation()}
+              @click=${(e: Event) => {
+                e.stopPropagation();
+                this.toggleMaximizeWindow(id);
+              }}
+            >${w.maximized ? "▢" : "▣"}</button>
+            <button
+              class="msWinBtn"
+              title="Close"
+              @pointerdown=${(e: PointerEvent) => e.stopPropagation()}
+              @click=${(e: Event) => {
+                e.stopPropagation();
+                this.toggleWindow(id);
+              }}
+            >✕</button>
+          </div>
+        </div>
+        <div class="msWindowBody">${body as never}</div>
+        ${w.maximized
+          ? nothing
+          : html`<div
+              class="msResizeHandle"
+              title="Resize"
+              @pointerdown=${(e: PointerEvent) => this.beginDrag(id, "resize", e)}
+            ></div>`}
+      </div>
+    `;
+  }
+
   render() {
     const sphereStatus = this.renderSphereStatusLabel();
 
@@ -1624,35 +2037,19 @@ export class MindSphereApp extends LitElement {
               <button
                 class="pill"
                 style="cursor:pointer"
-                @click=${() => {
-                  const next = !this.chatOpen;
-                  this.chatOpen = next;
-                  if (next) {
-                    this.tasksOpen = false;
-                    void this.refreshHistory();
-                  }
-                }}
-                title=${this.chatOpen ? "Close chat" : "Open chat"}
+                @click=${() => this.toggleWindow("chat")}
+                title=${this.windows.chat.open ? "Close chat" : "Open chat"}
               >
-                <span>${this.chatOpen ? "Hide chat" : "Show chat"}</span>
+                <span>${this.windows.chat.open ? "Hide chat" : "Show chat"}</span>
               </button>
 
               <button
                 class="pill"
                 style="cursor:pointer"
-                @click=${async () => {
-                  const next = !this.tasksOpen;
-                  this.tasksOpen = next;
-                  if (next) {
-                    this.chatOpen = false;
-                    const st = this.toCronState();
-                    await loadCronJobs(st);
-                    this.syncFromCronState(st);
-                  }
-                }}
-                title=${this.tasksOpen ? "Close tasks" : "Show tasks"}
+                @click=${() => this.toggleWindow("tasks")}
+                title=${this.windows.tasks.open ? "Close tasks" : "Show tasks"}
               >
-                <span>${this.tasksOpen ? "Hide tasks" : "Show tasks"}</span>
+                <span>${this.windows.tasks.open ? "Hide tasks" : "Show tasks"}</span>
               </button>
               <span class="pill">
                 <span class="dot ${this.connected ? "ok" : ""}"></span>
@@ -1663,9 +2060,9 @@ export class MindSphereApp extends LitElement {
           </div>
         </header>
 
-        <main>
+        <main style=${`--composerH:${this.composerH}px;`}>
           <div class="stage">
-            <div class="sphereWrap ${(this.chatOpen || this.tasksOpen || this.agentsOpen) ? "hidden" : ""}">
+            <div class="sphereWrap">
               ${sphereStatus
                 ? html`<div
                     style="position:absolute; margin-bottom: 420px; font-weight:800; letter-spacing:0.12em; font-size:12px; color: rgba(226,232,240,0.9); text-transform:uppercase;"
@@ -1676,15 +2073,9 @@ export class MindSphereApp extends LitElement {
               <div class="sphere"></div>
             </div>
 
-            <div class="drawer ${(this.chatOpen || this.tasksOpen || this.agentsOpen) ? "open" : "closed"}">
-              ${this.chatOpen
-                ? this.renderMessages()
-                : this.tasksOpen
-                  ? this.renderTasks()
-                  : this.agentsOpen
-                    ? this.renderAgentsPanel()
-                    : nothing}
-            </div>
+            ${this.renderWindow("chat", "Chat", this.renderMessages())}
+            ${this.renderWindow("tasks", "Tasks", this.renderTasks())}
+            ${this.renderWindow("agents", "Agents", this.renderAgentsPanel())}
           </div>
 
           <div class="settings" style="width:min(1100px,100%); margin-top: 14px; display:none;">
@@ -1705,26 +2096,20 @@ export class MindSphereApp extends LitElement {
           </div>
         </main>
 
-        <div class="composer">
+        <div class="composer" style=${`height:${this.composerH}px;`}>
+          <div
+            class="composerResize"
+            title="Resize composer"
+            @pointerdown=${(e: PointerEvent) => this.beginComposerResize(e)}
+          ></div>
           <div class="composerMeta">
             <div style="display:flex; gap:10px; align-items:center;">
               <button
                 class="tinyBtn ghostBtn"
                 style="height:32px"
                 ?disabled=${!this.connected}
-                @click=${async () => {
-                  const next = !this.agentsOpen;
-                  this.agentsOpen = next;
-                  if (next) {
-                    this.chatOpen = false;
-                    this.tasksOpen = false;
-                    const st = this.toAgentsState();
-                    await loadAgents(st);
-                    this.syncFromAgentsState(st);
-                    await this.ensureAgentFilesLoaded(this.activeAgentId);
-                  }
-                }}
-                title=${this.agentsOpen ? "Hide agents" : "Show agents"}
+                @click=${() => this.toggleWindow("agents")}
+                title=${this.windows.agents.open ? "Hide agents" : "Show agents"}
               >
                 Agents
               </button>
