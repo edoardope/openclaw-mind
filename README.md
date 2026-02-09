@@ -1,9 +1,9 @@
-# 🦞 OpenClaw — Personal AI Assistant
+# 🔵 MindSphere — Personal AGI Assistant (OpenClaw fork)
 
 <p align="center">
     <picture>
         <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/openclaw-logo-text-dark.png">
-        <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/openclaw-logo-text.png" alt="OpenClaw" width="500">
+        <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/openclaw-logo-text.png" alt="MindSphere (OpenClaw fork)" width="500">
     </picture>
 </p>
 
@@ -18,17 +18,19 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
 </p>
 
-**OpenClaw** is a _personal AI assistant_ you run on your own devices.
-It answers you on the channels you already use (WhatsApp, Telegram, Slack, Discord, Google Chat, Signal, iMessage, Microsoft Teams, WebChat), plus extension channels like BlueBubbles, Matrix, Zalo, and Zalo Personal. It can speak and listen on macOS/iOS/Android, and can render a live Canvas you control. The Gateway is just the control plane — the product is the assistant.
+**MindSphere** is a branded, opinionated fork of **OpenClaw**: a _personal AGI-style assistant_ you run on your own devices.
 
-If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
+- Same core Gateway (channels, tools, sessions, cron, Canvas, etc.).
+- Adds a second, modern web UI (**MindSphere UI**) served at **`/ms`** alongside the standard Control UI.
 
-[Website](https://openclaw.ai) · [Docs](https://docs.openclaw.ai) · [DeepWiki](https://deepwiki.com/openclaw/openclaw) · [Getting Started](https://docs.openclaw.ai/start/getting-started) · [Updating](https://docs.openclaw.ai/install/updating) · [Showcase](https://docs.openclaw.ai/start/showcase) · [FAQ](https://docs.openclaw.ai/start/faq) · [Wizard](https://docs.openclaw.ai/start/wizard) · [Nix](https://github.com/openclaw/nix-openclaw) · [Docker](https://docs.openclaw.ai/install/docker) · [Discord](https://discord.gg/clawd)
+It answers you on the channels you already use (WhatsApp, Telegram, Slack, Discord, Google Chat, Signal, iMessage, Microsoft Teams, WebChat), plus extension channels like BlueBubbles, Matrix, Zalo, and Zalo Personal.
+
+Links:
+- OpenClaw docs (still apply): https://docs.openclaw.ai
+- OpenClaw security guide: https://docs.openclaw.ai/gateway/security
 
 Preferred setup: run the onboarding wizard (`openclaw onboard`) in your terminal.
-The wizard guides you step by step through setting up the gateway, workspace, channels, and skills. The CLI wizard is the recommended path and works on **macOS, Linux, and Windows (via WSL2; strongly recommended)**.
-Works with npm, pnpm, or bun.
-New install? Start here: [Getting started](https://docs.openclaw.ai/start/getting-started)
+In this fork it’s branded as **MindSphere onboarding** and includes optional skill setup (e.g. Google Suite via gogcli).
 
 **Subscriptions (OAuth):**
 
@@ -42,9 +44,11 @@ Model note: while any model is supported, I strongly recommend **Anthropic Pro/M
 - Models config + CLI: [Models](https://docs.openclaw.ai/concepts/models)
 - Auth profile rotation (OAuth vs API keys) + fallbacks: [Model failover](https://docs.openclaw.ai/concepts/model-failover)
 
-## Install (recommended)
+## Install
 
 Runtime: **Node ≥22**.
+
+### Option 1 — Official OpenClaw (upstream)
 
 ```bash
 npm install -g openclaw@latest
@@ -53,23 +57,47 @@ npm install -g openclaw@latest
 openclaw onboard --install-daemon
 ```
 
-The wizard installs the Gateway daemon (launchd/systemd user service) so it stays running.
+### Option 2 — Install from *this fork* (MindSphere)
+
+This is the path if you want the MindSphere UI at `/ms` and the MindSphere-branded onboarding.
+
+```bash
+git clone https://github.com/edoardope/openclaw-mind.git
+cd openclaw-mind
+
+pnpm install
+pnpm build
+pnpm ui:build
+pnpm ui:mindsphere:build
+
+# Run the gateway from source
+$env:OPENCLAW_PROFILE = "mind"
+node scripts/run-node.mjs gateway
+```
+
+Then open:
+- Control UI: http://127.0.0.1:18789/
+- MindSphere UI: http://127.0.0.1:18789/ms
 
 ## Quick start (TL;DR)
 
 Runtime: **Node ≥22**.
 
-Full beginner guide (auth, pairing, channels): [Getting started](https://docs.openclaw.ai/start/getting-started)
-
 ```bash
+# Upstream install
 openclaw onboard --install-daemon
 
+# Start gateway (default port is usually 18789)
 openclaw gateway --port 18789 --verbose
 
-# Send a message
-openclaw message send --to +1234567890 --message "Hello from OpenClaw"
+# Open UIs
+# - http://127.0.0.1:18789/    (Control UI)
+# - http://127.0.0.1:18789/ms  (MindSphere UI, this fork)
 
-# Talk to the assistant (optionally deliver back to any connected channel: WhatsApp/Telegram/Slack/Discord/Google Chat/Signal/iMessage/BlueBubbles/Microsoft Teams/Matrix/Zalo/Zalo Personal/WebChat)
+# Send a message
+openclaw message send --to +1234567890 --message "Hello from MindSphere"
+
+# Talk to the assistant
 openclaw agent --message "Ship checklist" --thinking high
 ```
 
