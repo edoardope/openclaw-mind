@@ -57,6 +57,46 @@ const MEMORY_FILE_NAMES = [DEFAULT_MEMORY_FILENAME, DEFAULT_MEMORY_ALT_FILENAME]
 
 const ALLOWED_FILE_NAMES = new Set<string>([...BOOTSTRAP_FILE_NAMES, ...MEMORY_FILE_NAMES]);
 
+function isSafeRelativePath(p: string): boolean {
+  if (!p || typeof p !== "string") return false;
+  if (p.includes("\\")) return false; // enforce posix separators for RPC
+  if (p.startsWith("/")) return false;
+  const parts = p.split("/");
+  if (parts.some((part) => part === "" || part === "." || part === "..")) return false;
+  return true;
+}
+
+function isAllowedAgentFileName(name: string): boolean {
+  if (ALLOWED_FILE_NAMES.has(name)) {
+    return true;
+  }
+  // Allow daily memory files under memory/YYYY-MM-DD.md
+  if (!isSafeRelativePath(name)) {
+    return false;
+  }
+  if (/^memory\/[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$/i.test(name)) {
+    return true;
+  }
+  // Allow additional markdown memory notes under memory/*.md (no subdirs)
+  if (/^memory\/[A-Za-z0-9_.-]+\.md$/i.test(name)) {
+    return true;
+  }
+  return false;
+}
+
+function resolveWorkspaceFilePath(workspaceDir: string, name: string): string | null {
+  if (!isAllowedAgentFileName(name)) {
+    return null;
+  }
+  const filePath = path.join(workspaceDir, name);
+  const resolved = path.resolve(filePath);
+  const root = path.resolve(workspaceDir);
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+    return null;
+  }
+  return resolved;
+}
+
 type FileMeta = {
   size: number;
   updatedAtMs: number;
@@ -126,6 +166,31 @@ async function listAgentFiles(workspaceDir: string) {
     } else {
       files.push({ name: DEFAULT_MEMORY_FILENAME, path: primaryMemoryPath, missing: true });
     }
+  }
+
+  // Daily memory files: memory/*.md (including YYYY-MM-DD.md)
+  try {
+    const memDir = path.join(workspaceDir, "memory");
+    const entries = await fs.readdir(memDir, { withFileTypes: true });
+    for (const ent of entries) {
+      if (!ent.isFile()) continue;
+      if (!/\.md$/i.test(ent.name)) continue;
+      const relName = `memory/${ent.name}`;
+      if (!isAllowedAgentFileName(relName)) continue;
+      const filePath = path.join(memDir, ent.name);
+      const meta = await statFile(filePath);
+      if (meta) {
+        files.push({
+          name: relName,
+          path: filePath,
+          missing: false,
+          size: meta.size,
+          updatedAtMs: meta.updatedAtMs,
+        });
+      }
+    }
+  } catch {
+    // no memory dir, ignore
   }
 
   return files;
@@ -410,7 +475,9 @@ export const agentsHandlers: GatewayRequestHandlers = {
       return;
     }
     const name = String(params.name ?? "").trim();
-    if (!ALLOWED_FILE_NAMES.has(name)) {
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
+    const filePath = resolveWorkspaceFilePath(workspaceDir, name);
+    if (!filePath) {
       respond(
         false,
         undefined,
@@ -418,8 +485,6 @@ export const agentsHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-    const filePath = path.join(workspaceDir, name);
     const meta = await statFile(filePath);
     if (!meta) {
       respond(
@@ -472,7 +537,11 @@ export const agentsHandlers: GatewayRequestHandlers = {
       return;
     }
     const name = String(params.name ?? "").trim();
-    if (!ALLOWED_FILE_NAMES.has(name)) {
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
+    await fs.mkdir(workspaceDir, { recursive: true });
+
+    const filePath = resolveWorkspaceFilePath(workspaceDir, name);
+    if (!filePath) {
       respond(
         false,
         undefined,
@@ -480,9 +549,9 @@ export const agentsHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-    await fs.mkdir(workspaceDir, { recursive: true });
-    const filePath = path.join(workspaceDir, name);
+
+    // Ensure nested dirs exist (e.g. memory/)
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
     const content = String(params.content ?? "");
     await fs.writeFile(filePath, content, "utf-8");
     const meta = await statFile(filePath);

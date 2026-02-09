@@ -929,6 +929,8 @@ export class MindSphereApp extends LitElement {
   @state() memoryAddText = "";
   @state() memoryAddFormat: "bullet" | "json" = "bullet";
   @state() memoryAddCategory: "preference" | "fact" | "decision" | "entity" | "other" = "fact";
+  @state() memoryView: "durable" | "daily" = "durable";
+  @state() memoryDailyFile: string = "";
 
   @state() permissionsLoading = false;
   @state() permissionsError: string | null = null;
@@ -1073,17 +1075,35 @@ export class MindSphereApp extends LitElement {
     await loadAgentFiles(st, agentId);
     this.syncFromAgentFilesState(st);
 
-    const pick = "MEMORY.md" as const;
-
-    // Don't disturb the prompt editor selection; just make sure content is loaded.
-    await loadAgentFileContent(st, agentId, pick, { force: true, preserveDraft: true });
+    // Refresh list first so daily files show up.
+    await loadAgentFiles(st, agentId);
     this.syncFromAgentFilesState(st);
 
-    // If the memory file is missing, seed a minimal header so the editor isn't blank.
-    const base = this.agentFileContents[pick] ?? "";
-    const draft = this.agentFileDrafts[pick] ?? "";
+    // Always ensure durable MEMORY.md is loaded.
+    const durable = "MEMORY.md" as const;
+    await loadAgentFileContent(st, agentId, durable, { force: true, preserveDraft: true });
+
+    // If user is in daily view, also load the selected daily file.
+    if (this.memoryView === "daily") {
+      const daily = this.getMemoryTargetFileName();
+      await loadAgentFileContent(st, agentId, daily, { force: true, preserveDraft: true });
+    }
+
+    this.syncFromAgentFilesState(st);
+
+    // Seed headers if empty
+    const base = this.agentFileContents[durable] ?? "";
+    const draft = this.agentFileDrafts[durable] ?? "";
     if (!base.trim() && !draft.trim()) {
-      this.agentFileDrafts = { ...this.agentFileDrafts, [pick]: "# Memory\n" };
+      this.agentFileDrafts = { ...this.agentFileDrafts, [durable]: "# Memory\n" };
+    }
+    if (this.memoryView === "daily") {
+      const daily = this.getMemoryTargetFileName();
+      const base2 = this.agentFileContents[daily] ?? "";
+      const draft2 = this.agentFileDrafts[daily] ?? "";
+      if (!base2.trim() && !draft2.trim()) {
+        this.agentFileDrafts = { ...this.agentFileDrafts, [daily]: "# Daily memory\n" };
+      }
     }
   }
 
@@ -1781,18 +1801,43 @@ export class MindSphereApp extends LitElement {
     `;
   }
 
-  private getAgentMemoryFileName(): "MEMORY.md" {
-    // Durable memory is MEMORY.md. We intentionally do not surface legacy memory.md here.
+  private getDailyMemoryFiles(): string[] {
+    const files = this.agentFilesList?.files ?? [];
+    return files
+      .map((f) => f.name)
+      .filter((n) => typeof n === "string" && /^memory\/.+\.md$/i.test(n))
+      .toSorted((a, b) => b.localeCompare(a));
+  }
+
+  private getMemoryTargetFileName(): string {
+    if (this.memoryView === "daily") {
+      const known = this.getDailyMemoryFiles();
+      if (this.memoryDailyFile && known.includes(this.memoryDailyFile)) {
+        return this.memoryDailyFile;
+      }
+      // default daily to the most recent file if present, otherwise today's.
+      const latest = known[0];
+      if (latest) return latest;
+      return this.getTodayDailyMemoryFileName();
+    }
     return "MEMORY.md";
   }
 
+  private getTodayDailyMemoryFileName(): string {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `memory/${yyyy}-${mm}-${dd}.md`;
+  }
+
   private getAgentMemoryDraft(): string {
-    const name = this.getAgentMemoryFileName();
+    const name = this.getMemoryTargetFileName();
     return this.agentFileDrafts[name] ?? "";
   }
 
   private setAgentMemoryDraft(next: string) {
-    const name = this.getAgentMemoryFileName();
+    const name = this.getMemoryTargetFileName();
     this.agentFileDrafts = { ...this.agentFileDrafts, [name]: next };
   }
 
@@ -1814,7 +1859,7 @@ export class MindSphereApp extends LitElement {
   }
 
   private deleteMemoryBulletAtLine(lineIdx: number) {
-    const name = this.getAgentMemoryFileName();
+    const name = this.getMemoryTargetFileName();
     const cur = this.agentFileDrafts[name] ?? "";
     const lines = cur.split(/\r?\n/);
     if (lineIdx < 0 || lineIdx >= lines.length) {
@@ -1828,7 +1873,7 @@ export class MindSphereApp extends LitElement {
     const text = this.memoryAddText.trim();
     if (!text) return;
 
-    const name = this.getAgentMemoryFileName();
+    const name = this.getMemoryTargetFileName();
     const cur = this.agentFileDrafts[name] ?? "";
 
     let addition = "";
@@ -1843,14 +1888,15 @@ export class MindSphereApp extends LitElement {
       addition = `\n- ${text}\n`;
     }
 
-    const base = cur.trim() ? cur.replace(/\s*$/, "") : "# Memory\n";
+    const header = this.memoryView === "daily" ? "# Daily memory\n" : "# Memory\n";
+    const base = cur.trim() ? cur.replace(/\s*$/, "") : header;
     const next = base + addition;
     this.setAgentMemoryDraft(next);
     this.memoryAddText = "";
   }
 
   private renderAgentMemoryEditor() {
-    const name = this.getAgentMemoryFileName();
+    const name = this.getMemoryTargetFileName();
     const draft = this.getAgentMemoryDraft();
     const base = this.agentFileContents[name] ?? "";
     const dirty = draft !== base;
@@ -1861,7 +1907,7 @@ export class MindSphereApp extends LitElement {
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
           <div>
             <div class="taskName">Memory for agent: <code>${this.activeAgentId}</code></div>
-            <div class="mini">Durable memory file: <code>${name}</code> (agent workspace)</div>
+            <div class="mini">Editing: <code>${name}</code> (agent workspace)</div>
           </div>
 
           <div style="display:flex; gap:10px; align-items:center;">
@@ -1891,6 +1937,43 @@ export class MindSphereApp extends LitElement {
         </div>
 
         <div class="row2" style="margin-top: 12px;">
+          <div class="field">
+            <label>View</label>
+            <div class="row2" style="gap:10px;">
+              <select
+                .value=${this.memoryView}
+                @change=${async (e: Event) => {
+                  this.memoryView = (e.target as HTMLSelectElement).value as any;
+                  // Ensure target file is loaded
+                  await this.ensureAgentMemoryLoaded(this.activeAgentId);
+                }}
+              >
+                <option value="durable">Durable (MEMORY.md)</option>
+                <option value="daily">Daily (memory/YYYY-MM-DD.md)</option>
+              </select>
+
+              ${this.memoryView === "daily"
+                ? html`<select
+                    .value=${this.memoryDailyFile || this.getMemoryTargetFileName()}
+                    @change=${async (e: Event) => {
+                      this.memoryDailyFile = (e.target as HTMLSelectElement).value;
+                      const st = this.toAgentFilesState();
+                      await loadAgentFileContent(st, this.activeAgentId, this.memoryDailyFile, {
+                        force: true,
+                        preserveDraft: true,
+                      });
+                      this.syncFromAgentFilesState(st);
+                    }}
+                  >
+                    ${this.getDailyMemoryFiles().map((f) => html`<option value=${f}>${f}</option>`)}
+                    ${this.getDailyMemoryFiles().length === 0
+                      ? html`<option value=${this.getTodayDailyMemoryFileName()}>${this.getTodayDailyMemoryFileName()}</option>`
+                      : nothing}
+                  </select>`
+                : nothing}
+            </div>
+          </div>
+
           <div class="field">
             <label>Add memory</label>
             <input
@@ -1932,10 +2015,30 @@ export class MindSphereApp extends LitElement {
           </div>
         </div>
 
-        <div style="display:flex; gap:10px; align-items:center; margin-top: 10px;">
+        <div style="display:flex; gap:10px; align-items:center; margin-top: 10px; flex-wrap: wrap;">
           <button class="tinyBtn" ?disabled=${!this.memoryAddText.trim()} @click=${() => this.appendMemoryEntry()}>
             Add
           </button>
+          ${this.memoryView === "daily"
+            ? html`<button
+                class="tinyBtn ghostBtn"
+                @click=${async () => {
+                  const file = this.getTodayDailyMemoryFileName();
+                  this.memoryDailyFile = file;
+                  const st = this.toAgentFilesState();
+                  await loadAgentFiles(st, this.activeAgentId);
+                  await loadAgentFileContent(st, this.activeAgentId, file, { force: true, preserveDraft: true });
+                  this.syncFromAgentFilesState(st);
+                  const base2 = this.agentFileContents[file] ?? "";
+                  const draft2 = this.agentFileDrafts[file] ?? "";
+                  if (!base2.trim() && !draft2.trim()) {
+                    this.agentFileDrafts = { ...this.agentFileDrafts, [file]: "# Daily memory\n" };
+                  }
+                }}
+              >
+                Open today
+              </button>`
+            : nothing}
           <button
             class="tinyBtn ghostBtn"
             ?disabled=${!dirty}
