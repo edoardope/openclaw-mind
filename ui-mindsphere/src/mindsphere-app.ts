@@ -1073,9 +1073,7 @@ export class MindSphereApp extends LitElement {
     await loadAgentFiles(st, agentId);
     this.syncFromAgentFilesState(st);
 
-    const preferred = ["MEMORY.md", "memory.md"];
-    const available = st.agentFilesList?.files?.map((f) => f.name) ?? [];
-    const pick = preferred.find((n) => available.includes(n)) ?? preferred[0];
+    const pick = "MEMORY.md" as const;
 
     // Don't disturb the prompt editor selection; just make sure content is loaded.
     await loadAgentFileContent(st, agentId, pick, { force: true, preserveDraft: true });
@@ -1783,12 +1781,8 @@ export class MindSphereApp extends LitElement {
     `;
   }
 
-  private getAgentMemoryFileName(): "MEMORY.md" | "memory.md" {
-    const files = this.agentFilesList?.files ?? [];
-    const hasPrimary = files.some((f) => f.name === "MEMORY.md" && !f.missing);
-    const hasAlt = files.some((f) => f.name === "memory.md" && !f.missing);
-    if (hasPrimary) return "MEMORY.md";
-    if (hasAlt) return "memory.md";
+  private getAgentMemoryFileName(): "MEMORY.md" {
+    // Durable memory is MEMORY.md. We intentionally do not surface legacy memory.md here.
     return "MEMORY.md";
   }
 
@@ -1867,7 +1861,7 @@ export class MindSphereApp extends LitElement {
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
           <div>
             <div class="taskName">Memory for agent: <code>${this.activeAgentId}</code></div>
-            <div class="mini">File: <code>${name}</code> (agent workspace)</div>
+            <div class="mini">Durable memory file: <code>${name}</code> (agent workspace)</div>
           </div>
 
           <div style="display:flex; gap:10px; align-items:center;">
