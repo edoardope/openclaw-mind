@@ -15,7 +15,11 @@ import {
 } from "../../ui/src/ui/controllers/cron.ts";
 import type { CronFormState } from "../../ui/src/ui/ui-types.ts";
 
-import type { AgentsListResult, AgentsFilesListResult } from "../../ui/src/ui/types.ts";
+import type {
+  AgentsListResult,
+  AgentsFilesListResult,
+  ConfigSnapshot,
+} from "../../ui/src/ui/types.ts";
 import { loadAgents, type AgentsState } from "../../ui/src/ui/controllers/agents.ts";
 import {
   loadAgentFiles,
@@ -23,6 +27,8 @@ import {
   saveAgentFile,
   type AgentFilesState,
 } from "../../ui/src/ui/controllers/agent-files.ts";
+
+import { serializeConfigForm } from "../../ui/src/ui/controllers/config/form-utils.ts";
 
 type AgentRow = { id: string; name?: string; default?: boolean };
 
@@ -917,6 +923,16 @@ export class MindSphereApp extends LitElement {
   @state() agentFileContents: Record<string, string> = {};
   @state() agentFileSaving = false;
 
+  @state() agentPanelTab: "prompts" | "permissions" = "prompts";
+
+  @state() permissionsLoading = false;
+  @state() permissionsError: string | null = null;
+  @state() permissionsDraft = "";
+  @state() permissionsOriginal = "";
+  @state() permissionsDirty = false;
+  @state() permissionsApplying = false;
+  private permissionsSnapshot: ConfigSnapshot | null = null;
+
   private booted = false;
 
   connectedCallback(): void {
@@ -1045,6 +1061,454 @@ export class MindSphereApp extends LitElement {
     }
   }
 
+  private async loadAgentPermissions(agentId: string) {
+    if (!this.client || !this.connected) {
+      return;
+    }
+    if (this.permissionsLoading) {
+      return;
+    }
+
+    this.permissionsLoading = true;
+    this.permissionsError = null;
+    try {
+      const snap = await this.client.request<ConfigSnapshot>("config.get", {});
+      this.permissionsSnapshot = snap;
+
+      const cfg = (snap?.config ?? {}) as any;
+      const list: any[] = Array.isArray(cfg?.agents?.list) ? cfg.agents.list : [];
+      const idx = list.findIndex((a) => (a?.id ?? "") === agentId);
+      const toolsOverride = idx >= 0 ? (list[idx]?.tools ?? null) : null;
+
+      const text = JSON.stringify(toolsOverride ?? {}, null, 2);
+      this.permissionsDraft = text;
+      this.permissionsOriginal = text;
+      this.permissionsDirty = false;
+    } catch (err) {
+      this.permissionsError = String(err);
+    } finally {
+      this.permissionsLoading = false;
+    }
+  }
+
+  private async applyAgentPermissions(agentId: string) {
+    if (!this.client || !this.connected) {
+      return;
+    }
+    const snap = this.permissionsSnapshot;
+    const baseHash = snap?.hash;
+    if (!snap || !baseHash) {
+      this.permissionsError = "Config snapshot/hash missing. Reload permissions and retry.";
+      return;
+    }
+
+    this.permissionsApplying = true;
+    this.permissionsError = null;
+    try {
+      let nextTools: any;
+      try {
+        nextTools = JSON.parse(this.permissionsDraft || "{}");
+      } catch {
+        this.permissionsError = "Invalid JSON. Permissions must be valid JSON.";
+        return;
+      }
+
+      const cfg = (snap.config ?? {}) as any;
+      cfg.agents = cfg.agents ?? {};
+      cfg.agents.list = Array.isArray(cfg.agents.list) ? cfg.agents.list : [];
+
+      const list: any[] = cfg.agents.list;
+      const idx = list.findIndex((a) => (a?.id ?? "") === agentId);
+      if (idx < 0) {
+        this.permissionsError = `Agent ${agentId} not found in config.agents.list. Create it (or reload) and retry.`;
+        return;
+      }
+
+      // Normalize empty object => remove override (clean config).
+      const isEmpty =
+        nextTools && typeof nextTools === "object" && !Array.isArray(nextTools)
+          ? Object.keys(nextTools).length === 0
+          : false;
+
+      if (isEmpty) {
+        delete list[idx].tools;
+      } else {
+        list[idx].tools = nextTools;
+      }
+
+      const raw = serializeConfigForm(cfg);
+      await this.client.request("config.apply", {
+        raw,
+        baseHash,
+        sessionKey: this.settings.sessionKey,
+      });
+
+      this.permissionsOriginal = this.permissionsDraft;
+      this.permissionsDirty = false;
+    } catch (err) {
+      this.permissionsError = String(err);
+    } finally {
+      this.permissionsApplying = false;
+    }
+  }
+
+  private getPermissionsObj(): any {
+    try {
+      return JSON.parse(this.permissionsDraft || "{}");
+    } catch {
+      return null;
+    }
+  }
+
+  private updatePermissionsObj(next: any) {
+    const text = JSON.stringify(next ?? {}, null, 2);
+    this.permissionsDraft = text;
+    this.permissionsDirty = this.permissionsDraft !== this.permissionsOriginal;
+  }
+
+  private updatePermissionsField(path: string[], value: unknown) {
+    const cur = this.getPermissionsObj();
+    if (!cur || typeof cur !== "object" || Array.isArray(cur)) {
+      this.permissionsError = "Permissions JSON is invalid. Fix it in Advanced JSON or reload.";
+      return;
+    }
+    this.permissionsError = null;
+
+    let node: any = cur;
+    for (let i = 0; i < path.length - 1; i++) {
+      const key = path[i] as string;
+      const parent = node;
+      const nextNode = parent[key] ?? {};
+      parent[key] = nextNode;
+      node = parent[key];
+      if (!node || typeof node !== "object" || Array.isArray(node)) {
+        // If path collides with a non-object, reset it to an object.
+        parent[key] = {};
+        node = parent[key];
+      }
+    }
+    node[path[path.length - 1] as string] = value;
+
+    // prune empty objects a bit (keeps config clean).
+    const prune = (obj: any): any => {
+      if (!obj || typeof obj !== "object") return obj;
+      if (Array.isArray(obj)) return obj;
+      for (const k of Object.keys(obj)) {
+        const v = prune(obj[k]);
+        const emptyObj = v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0;
+        if (v === undefined || emptyObj) {
+          delete obj[k];
+        } else {
+          obj[k] = v;
+        }
+      }
+      return obj;
+    };
+
+    prune(cur);
+    this.updatePermissionsObj(cur);
+  }
+
+  private parseCsvList(text: string): string[] {
+    return text
+      .split(/[,\n]/g)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  private renderAgentPermissionsEditor() {
+    const obj = this.getPermissionsObj();
+
+    const profile = obj?.profile ?? "";
+    const allowText = Array.isArray(obj?.allow) ? obj.allow.join("\n") : "";
+    const alsoAllowText = Array.isArray(obj?.alsoAllow) ? obj.alsoAllow.join("\n") : "";
+    const denyText = Array.isArray(obj?.deny) ? obj.deny.join("\n") : "";
+
+    const elevatedEnabled = obj?.elevated?.enabled;
+
+    const execHost = obj?.exec?.host ?? "";
+    const execSecurity = obj?.exec?.security ?? "";
+    const execAsk = obj?.exec?.ask ?? "";
+    const execNode = obj?.exec?.node ?? "";
+    const execTimeout = obj?.exec?.timeoutSec ?? "";
+    const execBackground = obj?.exec?.backgroundMs ?? "";
+    const execNotifyOnExit = obj?.exec?.notifyOnExit ?? false;
+
+    const sandboxAllowText = Array.isArray(obj?.sandbox?.tools?.allow) ? obj.sandbox.tools.allow.join("\n") : "";
+    const sandboxDenyText = Array.isArray(obj?.sandbox?.tools?.deny) ? obj.sandbox.tools.deny.join("\n") : "";
+
+    return html`
+      <div class="field" style="margin-top: 12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap: 12px;">
+          <label>Tool permissions</label>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button
+              class="tinyBtn ghostBtn"
+              ?disabled=${!this.connected || this.permissionsLoading}
+              @click=${async () => await this.loadAgentPermissions(this.activeAgentId)}
+              title="Reload from gateway config"
+            >
+              Reload
+            </button>
+            <button
+              class="tinyBtn"
+              ?disabled=${!this.connected || this.permissionsApplying || this.permissionsLoading || !this.permissionsDirty}
+              @click=${async () => await this.applyAgentPermissions(this.activeAgentId)}
+              title="Apply config and restart gateway"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+        <div class="mini">
+          These settings edit <code>config.agents.list[].tools</code> for the active agent.
+        </div>
+        ${this.permissionsLoading ? html`<div class="mini">Loading…</div>` : nothing}
+        ${this.permissionsError ? html`<div class="error">${this.permissionsError}</div>` : nothing}
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label>Tool profile</label>
+          <select
+            .value=${profile}
+            ?disabled=${obj === null}
+            @change=${(e: Event) => {
+              const v = (e.target as HTMLSelectElement).value;
+              this.updatePermissionsField(["profile"], v || undefined);
+            }}
+          >
+            <option value="">(none)</option>
+            <option value="minimal">minimal</option>
+            <option value="coding">coding</option>
+            <option value="messaging">messaging</option>
+            <option value="full">full</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Elevated mode</label>
+          <select
+            .value=${typeof elevatedEnabled === "boolean" ? String(elevatedEnabled) : ""}
+            ?disabled=${obj === null}
+            @change=${(e: Event) => {
+              const raw = (e.target as HTMLSelectElement).value;
+              if (!raw) {
+                // remove override
+                this.updatePermissionsField(["elevated"], undefined);
+                return;
+              }
+              this.updatePermissionsField(["elevated", "enabled"], raw === "true");
+            }}
+          >
+            <option value="">(default)</option>
+            <option value="true">enabled</option>
+            <option value="false">disabled</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label>Allow tools (one per line)</label>
+          <textarea
+            style="min-height: 120px;"
+            .value=${allowText}
+            ?disabled=${obj === null}
+            @input=${(e: InputEvent) => {
+              const v = (e.target as HTMLTextAreaElement).value;
+              const list = this.parseCsvList(v);
+              this.updatePermissionsField(["allow"], list.length ? list : undefined);
+            }}
+          ></textarea>
+        </div>
+        <div class="field">
+          <label>Deny tools (one per line)</label>
+          <textarea
+            style="min-height: 120px;"
+            .value=${denyText}
+            ?disabled=${obj === null}
+            @input=${(e: InputEvent) => {
+              const v = (e.target as HTMLTextAreaElement).value;
+              const list = this.parseCsvList(v);
+              this.updatePermissionsField(["deny"], list.length ? list : undefined);
+            }}
+          ></textarea>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Also allow (merged into allow/profile) (one per line)</label>
+        <textarea
+          style="min-height: 80px;"
+          .value=${alsoAllowText}
+          ?disabled=${obj === null}
+          @input=${(e: InputEvent) => {
+            const v = (e.target as HTMLTextAreaElement).value;
+            const list = this.parseCsvList(v);
+            this.updatePermissionsField(["alsoAllow"], list.length ? list : undefined);
+          }}
+        ></textarea>
+      </div>
+
+      <div class="panel" style="margin-top: 14px; padding: 12px;">
+        <div class="taskName">Exec defaults</div>
+        <div class="mini">Controls how the <code>exec</code> tool behaves for this agent.</div>
+
+        <div class="row2" style="margin-top: 10px;">
+          <div class="field">
+            <label>Host</label>
+            <select
+              .value=${execHost}
+              ?disabled=${obj === null}
+              @change=${(e: Event) =>
+                this.updatePermissionsField(["exec", "host"], (e.target as HTMLSelectElement).value || undefined)}
+            >
+              <option value="">(default)</option>
+              <option value="sandbox">sandbox</option>
+              <option value="gateway">gateway</option>
+              <option value="node">node</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Security</label>
+            <select
+              .value=${execSecurity}
+              ?disabled=${obj === null}
+              @change=${(e: Event) =>
+                this.updatePermissionsField(["exec", "security"], (e.target as HTMLSelectElement).value || undefined)}
+            >
+              <option value="">(default)</option>
+              <option value="deny">deny</option>
+              <option value="allowlist">allowlist</option>
+              <option value="full">full</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div class="field">
+            <label>Ask mode</label>
+            <select
+              .value=${execAsk}
+              ?disabled=${obj === null}
+              @change=${(e: Event) =>
+                this.updatePermissionsField(["exec", "ask"], (e.target as HTMLSelectElement).value || undefined)}
+            >
+              <option value="">(default)</option>
+              <option value="off">off</option>
+              <option value="on-miss">on-miss</option>
+              <option value="always">always</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Default node (when host=node)</label>
+            <input
+              .value=${execNode}
+              placeholder="node id/name"
+              ?disabled=${obj === null}
+              @input=${(e: Event) =>
+                this.updatePermissionsField(["exec", "node"], (e.target as HTMLInputElement).value.trim() || undefined)}
+            />
+          </div>
+        </div>
+
+        <div class="row2">
+          <div class="field">
+            <label>Timeout (sec)</label>
+            <input
+              type="number"
+              inputmode="numeric"
+              .value=${String(execTimeout ?? "")}
+              placeholder=""
+              ?disabled=${obj === null}
+              @input=${(e: Event) => {
+                const raw = (e.target as HTMLInputElement).value;
+                const n = raw.trim() ? Number(raw) : NaN;
+                this.updatePermissionsField(["exec", "timeoutSec"], Number.isFinite(n) ? n : undefined);
+              }}
+            />
+          </div>
+          <div class="field">
+            <label>Background after (ms)</label>
+            <input
+              type="number"
+              inputmode="numeric"
+              .value=${String(execBackground ?? "")}
+              placeholder=""
+              ?disabled=${obj === null}
+              @input=${(e: Event) => {
+                const raw = (e.target as HTMLInputElement).value;
+                const n = raw.trim() ? Number(raw) : NaN;
+                this.updatePermissionsField(["exec", "backgroundMs"], Number.isFinite(n) ? n : undefined);
+              }}
+            />
+          </div>
+        </div>
+
+        <label class="switch" style="margin-top: 8px; display:inline-flex;">
+          <input
+            type="checkbox"
+            .checked=${Boolean(execNotifyOnExit)}
+            ?disabled=${obj === null}
+            @change=${(e: Event) =>
+              this.updatePermissionsField(["exec", "notifyOnExit"], (e.target as HTMLInputElement).checked)}
+          />
+          <span>Notify on exec exit</span>
+        </label>
+      </div>
+
+      <div class="panel" style="margin-top: 14px; padding: 12px;">
+        <div class="taskName">Sandbox tool policy (when sandboxed)</div>
+        <div class="mini">Optional extra gating inside sandboxed sessions.</div>
+
+        <div class="row2" style="margin-top: 10px;">
+          <div class="field">
+            <label>Sandbox allow (one per line)</label>
+            <textarea
+              style="min-height: 90px;"
+              .value=${sandboxAllowText}
+              ?disabled=${obj === null}
+              @input=${(e: InputEvent) => {
+                const v = (e.target as HTMLTextAreaElement).value;
+                const list = this.parseCsvList(v);
+                this.updatePermissionsField(["sandbox", "tools", "allow"], list.length ? list : undefined);
+              }}
+            ></textarea>
+          </div>
+          <div class="field">
+            <label>Sandbox deny (one per line)</label>
+            <textarea
+              style="min-height: 90px;"
+              .value=${sandboxDenyText}
+              ?disabled=${obj === null}
+              @input=${(e: InputEvent) => {
+                const v = (e.target as HTMLTextAreaElement).value;
+                const list = this.parseCsvList(v);
+                this.updatePermissionsField(["sandbox", "tools", "deny"], list.length ? list : undefined);
+              }}
+            ></textarea>
+          </div>
+        </div>
+      </div>
+
+      <details style="margin-top: 14px;" ?open=${false}>
+        <summary class="mini" style="cursor:pointer;">Advanced JSON (raw)</summary>
+        <div class="field" style="margin-top: 10px;">
+          <textarea
+            style="min-height: 220px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"
+            .value=${this.permissionsDraft}
+            @input=${(e: InputEvent) => {
+              const v = (e.target as HTMLTextAreaElement).value;
+              this.permissionsDraft = v;
+              this.permissionsDirty = this.permissionsDraft !== this.permissionsOriginal;
+            }}
+          ></textarea>
+          <div class="mini">Tip: invalid JSON will block Apply.</div>
+        </div>
+      </details>
+    `;
+  }
+
   private syncFromAgentFilesState(next: AgentFilesState) {
     this.agentFilesLoading = next.agentFilesLoading;
     this.agentFilesError = next.agentFilesError;
@@ -1070,6 +1534,10 @@ export class MindSphereApp extends LitElement {
 
     // Load prompt files for the selected agent.
     void this.ensureAgentFilesLoaded(agentId);
+
+    if (this.agentPanelTab === "permissions") {
+      void this.loadAgentPermissions(agentId);
+    }
   }
 
   private syncFromCronState(next: CronState) {
@@ -1719,77 +2187,97 @@ export class MindSphereApp extends LitElement {
               </div>
 
               <div class="seg">
-                <button class="active">Prompts</button>
-                <button disabled title="Coming soon">Permissions</button>
-              </div>
-            </div>
-
-            <div class="row2">
-              <div class="field">
-                <label>Prompt file</label>
-                <select
-                  .value=${activeFile ?? ""}
-                  @change=${async (e: Event) => {
-                    const name = (e.target as HTMLSelectElement).value;
-                    this.agentFileActive = name;
-                    const st = this.toAgentFilesState();
-                    await loadAgentFileContent(st, this.activeAgentId, name, { force: true, preserveDraft: true });
-                    this.syncFromAgentFilesState(st);
+                <button
+                  class=${this.agentPanelTab === "prompts" ? "active" : ""}
+                  @click=${() => {
+                    this.agentPanelTab = "prompts";
                   }}
                 >
-                  ${(this.agentFilesList?.files ?? []).map((f) =>
-                    html`<option value=${f.name}>${f.name}</option>`,
-                  )}
-                </select>
-              </div>
-              <div class="field">
-                <label>Actions</label>
-                <div style="display:flex; gap:10px; align-items:center; height:40px;">
-                  <button
-                    class="tinyBtn"
-                    ?disabled=${!this.connected || !activeFile || this.agentFileSaving}
-                    @click=${async () => {
-                      if (!activeFile) {
-                        return;
-                      }
-                      const st = this.toAgentFilesState();
-                      const content = this.agentFileDrafts[activeFile] ?? "";
-                      await saveAgentFile(st, this.activeAgentId, activeFile, content);
-                      this.syncFromAgentFilesState(st);
-                    }}
-                  >
-                    Save
-                  </button>
-                  <button
-                    class="tinyBtn ghostBtn"
-                    ?disabled=${!activeFile}
-                    @click=${() => {
-                      if (!activeFile) {
-                        return;
-                      }
-                      const base = this.agentFileContents[activeFile] ?? "";
-                      this.agentFileDrafts = { ...this.agentFileDrafts, [activeFile]: base };
-                    }}
-                  >
-                    Reset
-                  </button>
-                  ${this.agentFilesError ? html`<span class="error">${this.agentFilesError}</span>` : nothing}
-                </div>
+                  Prompts
+                </button>
+                <button
+                  class=${this.agentPanelTab === "permissions" ? "active" : ""}
+                  @click=${async () => {
+                    this.agentPanelTab = "permissions";
+                    await this.loadAgentPermissions(this.activeAgentId);
+                  }}
+                >
+                  Permissions
+                </button>
               </div>
             </div>
 
-            <div class="field">
-              <textarea
-                .value=${editorValue}
-                @input=${(e: InputEvent) => {
-                  if (!activeFile) {
-                    return;
-                  }
-                  const value = (e.target as HTMLTextAreaElement).value;
-                  this.agentFileDrafts = { ...this.agentFileDrafts, [activeFile]: value };
-                }}
-              ></textarea>
-            </div>
+            ${this.agentPanelTab === "prompts"
+              ? html`
+                  <div class="row2">
+                    <div class="field">
+                      <label>Prompt file</label>
+                      <select
+                        .value=${activeFile ?? ""}
+                        @change=${async (e: Event) => {
+                          const name = (e.target as HTMLSelectElement).value;
+                          this.agentFileActive = name;
+                          const st = this.toAgentFilesState();
+                          await loadAgentFileContent(st, this.activeAgentId, name, { force: true, preserveDraft: true });
+                          this.syncFromAgentFilesState(st);
+                        }}
+                      >
+                        ${(this.agentFilesList?.files ?? []).map((f) =>
+                          html`<option value=${f.name}>${f.name}</option>`,
+                        )}
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>Actions</label>
+                      <div style="display:flex; gap:10px; align-items:center; height:40px;">
+                        <button
+                          class="tinyBtn"
+                          ?disabled=${!this.connected || !activeFile || this.agentFileSaving}
+                          @click=${async () => {
+                            if (!activeFile) {
+                              return;
+                            }
+                            const st = this.toAgentFilesState();
+                            const content = this.agentFileDrafts[activeFile] ?? "";
+                            await saveAgentFile(st, this.activeAgentId, activeFile, content);
+                            this.syncFromAgentFilesState(st);
+                          }}
+                        >
+                          Save
+                        </button>
+                        <button
+                          class="tinyBtn ghostBtn"
+                          ?disabled=${!activeFile}
+                          @click=${() => {
+                            if (!activeFile) {
+                              return;
+                            }
+                            const base = this.agentFileContents[activeFile] ?? "";
+                            this.agentFileDrafts = { ...this.agentFileDrafts, [activeFile]: base };
+                          }}
+                        >
+                          Reset
+                        </button>
+                        ${this.agentFilesError ? html`<span class="error">${this.agentFilesError}</span>` : nothing}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <textarea
+                      .value=${editorValue}
+                      @input=${(e: InputEvent) => {
+                        if (!activeFile) {
+                          return;
+                        }
+                        const value = (e.target as HTMLTextAreaElement).value;
+                        this.agentFileDrafts = { ...this.agentFileDrafts, [activeFile]: value };
+                      }}
+                    ></textarea>
+                  </div>
+                `
+              : this.renderAgentPermissionsEditor()}
+            
           </div>
         </div>
 
