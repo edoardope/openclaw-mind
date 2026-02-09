@@ -14,6 +14,17 @@ import {
   type CronState,
 } from "../../ui/src/ui/controllers/cron.ts";
 import type { CronFormState } from "../../ui/src/ui/ui-types.ts";
+
+import type { AgentsListResult, AgentsFilesListResult } from "../../ui/src/ui/types.ts";
+import { loadAgents, type AgentsState } from "../../ui/src/ui/controllers/agents.ts";
+import {
+  loadAgentFiles,
+  loadAgentFileContent,
+  saveAgentFile,
+  type AgentFilesState,
+} from "../../ui/src/ui/controllers/agent-files.ts";
+
+type AgentRow = { id: string; name?: string; default?: boolean };
 import {
   handleChatEvent,
   loadChatHistory,
@@ -390,6 +401,106 @@ export class MindSphereApp extends LitElement {
       color: rgba(226, 232, 240, 0.9);
     }
 
+    .agentsHeader {
+      padding: 16px 18px 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .agentsHeader .title {
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+
+    .agentsBody {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      height: 100%;
+    }
+
+    .agentsList {
+      border-right: 1px solid rgba(148, 163, 184, 0.10);
+      padding: 14px 14px 18px;
+      overflow: auto;
+    }
+
+    .agentCard {
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 16px;
+      background: rgba(2, 6, 23, 0.35);
+      padding: 12px 12px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+
+    .agentCard.active {
+      border-color: rgba(56, 189, 248, 0.26);
+      box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.10);
+    }
+
+    .agentName {
+      font-weight: 900;
+    }
+
+    .agentId {
+      margin-top: 3px;
+      font-size: 12px;
+      color: rgba(148, 163, 184, 0.92);
+    }
+
+    .agentEditor {
+      padding: 14px 16px 18px;
+      overflow: auto;
+    }
+
+    .agentEditor textarea {
+      min-height: 240px;
+      max-height: 48vh;
+    }
+
+    .seg {
+      display: inline-flex;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .seg button {
+      height: 32px;
+      min-width: 0;
+      padding: 0 12px;
+      border-radius: 0;
+      border: 0;
+      background: transparent;
+      font-size: 12px;
+      font-weight: 800;
+      color: rgba(226, 232, 240, 0.86);
+    }
+
+    .seg button.active {
+      background: rgba(56, 189, 248, 0.16);
+      color: rgba(226, 232, 240, 0.96);
+    }
+
+    @media (max-width: 900px) {
+      .agentsBody {
+        grid-template-columns: 1fr;
+      }
+      .agentsList {
+        border-right: 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+      }
+    }
+
     .drawer.closed {
       opacity: 0;
       transform: translateY(6px);
@@ -614,6 +725,7 @@ export class MindSphereApp extends LitElement {
 
   @state() chatOpen = false;
   @state() tasksOpen = false;
+  @state() agentsOpen = false;
 
   @state() chatLoading = false;
   @state() chatSending = false;
@@ -635,6 +747,7 @@ export class MindSphereApp extends LitElement {
     description: "",
     agentId: "main",
     enabled: true,
+    
     scheduleKind: "cron",
     scheduleAt: "",
     everyAmount: "",
@@ -650,6 +763,22 @@ export class MindSphereApp extends LitElement {
     deliveryChannel: "last",
     deliveryTo: "",
   };
+
+  @state() agentsLoading = false;
+  @state() agentsError: string | null = null;
+  @state() agentsList: AgentsListResult | null = null;
+  @state() activeAgentId: string = "main";
+
+  @state() agentCreateOpen = false;
+  @state() agentCreateName = "";
+
+  @state() agentFilesLoading = false;
+  @state() agentFilesError: string | null = null;
+  @state() agentFilesList: AgentsFilesListResult | null = null;
+  @state() agentFileActive: string | null = null;
+  @state() agentFileDrafts: Record<string, string> = {};
+  @state() agentFileContents: Record<string, string> = {};
+  @state() agentFileSaving = false;
 
   private booted = false;
 
@@ -704,6 +833,82 @@ export class MindSphereApp extends LitElement {
     };
   }
 
+  private toAgentsState(): AgentsState {
+    return {
+      client: this.client,
+      connected: this.connected,
+      agentsLoading: this.agentsLoading,
+      agentsError: this.agentsError,
+      agentsList: this.agentsList,
+      agentsSelectedId: this.activeAgentId,
+    };
+  }
+
+  private syncFromAgentsState(next: AgentsState) {
+    this.agentsLoading = next.agentsLoading;
+    this.agentsError = next.agentsError;
+    this.agentsList = next.agentsList;
+    if (next.agentsSelectedId && next.agentsSelectedId !== this.activeAgentId) {
+      this.setActiveAgent(next.agentsSelectedId);
+    }
+  }
+
+  private toAgentFilesState(): AgentFilesState {
+    return {
+      client: this.client,
+      connected: this.connected,
+      agentFilesLoading: this.agentFilesLoading,
+      agentFilesError: this.agentFilesError,
+      agentFilesList: this.agentFilesList,
+      agentFileContents: this.agentFileContents,
+      agentFileDrafts: this.agentFileDrafts,
+      agentFileActive: this.agentFileActive,
+      agentFileSaving: this.agentFileSaving,
+    };
+  }
+
+  private async ensureAgentFilesLoaded(agentId: string) {
+    const st = this.toAgentFilesState();
+    await loadAgentFiles(st, agentId);
+    this.syncFromAgentFilesState(st);
+
+    const defaults = ["SOUL.md", "USER.md", "IDENTITY.md", "HEARTBEAT.md"];
+    const available = st.agentFilesList?.files?.map((f) => f.name) ?? [];
+    const pick = defaults.find((n) => available.includes(n)) ?? available[0] ?? null;
+    if (pick) {
+      this.agentFileActive = pick;
+      await loadAgentFileContent(st, agentId, pick, { force: true, preserveDraft: true });
+      this.syncFromAgentFilesState(st);
+    }
+  }
+
+  private syncFromAgentFilesState(next: AgentFilesState) {
+    this.agentFilesLoading = next.agentFilesLoading;
+    this.agentFilesError = next.agentFilesError;
+    this.agentFilesList = next.agentFilesList;
+    this.agentFileContents = next.agentFileContents;
+    this.agentFileDrafts = next.agentFileDrafts;
+    this.agentFileActive = next.agentFileActive;
+    this.agentFileSaving = next.agentFileSaving;
+  }
+
+  private setActiveAgent(agentId: string) {
+    this.activeAgentId = agentId;
+    // Switch chat session key to this agent.
+    const sessionKey = agentId === "main" ? "agent:main:main" : `agent:${agentId}:main`;
+    this.settings = { ...this.settings, sessionKey };
+    saveSettings(this.settings);
+    // Refresh chat history in the new session.
+    void this.refreshHistory();
+    // Refresh cron list and agent files.
+    const cron = this.toCronState();
+    this.cronForm = { ...this.cronForm, agentId };
+    void loadCronJobs(cron).then(() => this.syncFromCronState(cron));
+
+    // Load prompt files for the selected agent.
+    void this.ensureAgentFilesLoaded(agentId);
+  }
+
   private syncFromCronState(next: CronState) {
     this.cronLoading = next.cronLoading;
     this.cronJobs = next.cronJobs;
@@ -751,6 +956,10 @@ export class MindSphereApp extends LitElement {
         // Preload cron jobs for the tasks drawer.
         const cron = this.toCronState();
         void loadCronJobs(cron).then(() => this.syncFromCronState(cron));
+
+        // Load agents list.
+        const a = this.toAgentsState();
+        void loadAgents(a).then(() => this.syncFromAgentsState(a));
       },
       onClose: ({ code, reason }) => {
         this.connected = false;
@@ -857,7 +1066,7 @@ export class MindSphereApp extends LitElement {
 
   private renderSphereStatusLabel(): string | null {
     // When overlays are closed, show a small state label above the sphere.
-    if (this.chatOpen || this.tasksOpen) {
+    if (this.chatOpen || this.tasksOpen || this.agentsOpen) {
       return null;
     }
     if (this.chatSending || this.chatRunId) {
@@ -1087,6 +1296,224 @@ export class MindSphereApp extends LitElement {
     `;
   }
 
+  private renderAgentsPanel() {
+    const agents = (this.agentsList?.agents ?? []) as AgentRow[];
+    const selected = this.activeAgentId;
+
+    const activeFile = this.agentFileActive;
+    const editorValue = activeFile ? (this.agentFileDrafts[activeFile] ?? "") : "";
+
+    return html`
+      <div class="panel">
+        <div class="agentsHeader">
+          <div class="title">Agents</div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button
+              class="tinyBtn"
+              ?disabled=${!this.connected || this.agentsLoading}
+              @click=${async () => {
+                const st = this.toAgentsState();
+                await loadAgents(st);
+                this.syncFromAgentsState(st);
+              }}
+            >
+              Refresh
+            </button>
+            <button class="tinyBtn" ?disabled=${!this.connected} @click=${() => {
+              this.agentCreateName = "";
+              this.agentCreateOpen = true;
+            }}>Add</button>
+          </div>
+        </div>
+
+        <div class="agentsBody">
+          <div class="agentsList">
+            ${this.agentsError ? html`<div class="error">${this.agentsError}</div>` : nothing}
+            ${this.agentsLoading ? html`<div class="mini">Loading…</div>` : nothing}
+
+            ${agents.map((a) => {
+              const isActive = a.id === selected;
+              const label = a.name?.trim() || a.id;
+              const canDelete = a.id !== "main";
+              return html`
+                <div
+                  class="agentCard ${isActive ? "active" : ""}"
+                  @click=${() => {
+                    this.setActiveAgent(a.id);
+                  }}
+                >
+                  <div>
+                    <div class="agentName">${label}</div>
+                    <div class="agentId">id: <code>${a.id}</code>${a.default ? " · default" : ""}</div>
+                  </div>
+                  <div style="display:flex; gap:10px; align-items:center;">
+                    ${isActive ? html`<span class="mini">active</span>` : nothing}
+                    ${canDelete
+                      ? html`<button
+                          class="tinyBtn ghostBtn"
+                          title="Delete agent"
+                          @click=${async (e: Event) => {
+                            e.stopPropagation();
+                            if (!this.client || !this.connected) {
+                              return;
+                            }
+                            if (!confirm(`Delete agent ${a.id}?`)) {
+                              return;
+                            }
+                            await this.client.request("agents.delete", { agentId: a.id, deleteFiles: true });
+                            const st = this.toAgentsState();
+                            await loadAgents(st);
+                            this.syncFromAgentsState(st);
+                            if (this.activeAgentId === a.id) {
+                              this.setActiveAgent("main");
+                            }
+                          }}
+                        >
+                          Delete
+                        </button>`
+                      : nothing}
+                  </div>
+                </div>
+              `;
+            })}
+          </div>
+
+          <div class="agentEditor">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+              <div>
+                <div class="taskName">Active agent: <code>${this.activeAgentId}</code></div>
+                <div class="mini">Session: <code>${this.settings.sessionKey}</code></div>
+              </div>
+
+              <div class="seg">
+                <button class="active">Prompts</button>
+                <button disabled title="Coming soon">Permissions</button>
+              </div>
+            </div>
+
+            <div style="height:12px"></div>
+
+            <div class="row2">
+              <div class="field">
+                <label>Prompt file</label>
+                <select
+                  .value=${activeFile ?? ""}
+                  @change=${async (e: Event) => {
+                    const name = (e.target as HTMLSelectElement).value;
+                    this.agentFileActive = name;
+                    const st = this.toAgentFilesState();
+                    await loadAgentFileContent(st, this.activeAgentId, name, { force: true, preserveDraft: true });
+                    this.syncFromAgentFilesState(st);
+                  }}
+                >
+                  ${(this.agentFilesList?.files ?? []).map((f) =>
+                    html`<option value=${f.name}>${f.name}</option>`,
+                  )}
+                </select>
+              </div>
+              <div class="field">
+                <label>Actions</label>
+                <div style="display:flex; gap:10px; align-items:center; height:40px;">
+                  <button
+                    class="tinyBtn"
+                    ?disabled=${!this.connected || !activeFile || this.agentFileSaving}
+                    @click=${async () => {
+                      if (!activeFile) {
+                        return;
+                      }
+                      const st = this.toAgentFilesState();
+                      const content = this.agentFileDrafts[activeFile] ?? "";
+                      await saveAgentFile(st, this.activeAgentId, activeFile, content);
+                      this.syncFromAgentFilesState(st);
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    class="tinyBtn ghostBtn"
+                    ?disabled=${!activeFile}
+                    @click=${() => {
+                      if (!activeFile) {
+                        return;
+                      }
+                      const base = this.agentFileContents[activeFile] ?? "";
+                      this.agentFileDrafts = { ...this.agentFileDrafts, [activeFile]: base };
+                    }}
+                  >
+                    Reset
+                  </button>
+                  ${this.agentFilesError ? html`<span class="error">${this.agentFilesError}</span>` : nothing}
+                </div>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Content</label>
+              <textarea
+                .value=${editorValue}
+                @input=${(e: InputEvent) => {
+                  if (!activeFile) {
+                    return;
+                  }
+                  const value = (e.target as HTMLTextAreaElement).value;
+                  this.agentFileDrafts = { ...this.agentFileDrafts, [activeFile]: value };
+                }}
+              ></textarea>
+            </div>
+          </div>
+        </div>
+
+        ${this.agentCreateOpen
+          ? html`<div class="modalBackdrop" @click=${() => (this.agentCreateOpen = false)}>
+              <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
+                <div class="modalHeader">
+                  <div class="title">Create agent</div>
+                  <button class="tinyBtn ghostBtn" @click=${() => (this.agentCreateOpen = false)}>
+                    Close
+                  </button>
+                </div>
+                <div class="modalBody">
+                  <div class="field">
+                    <label>Name (used to derive id)</label>
+                    <input
+                      .value=${this.agentCreateName}
+                      placeholder="research" 
+                      @input=${(e: Event) => (this.agentCreateName = (e.target as HTMLInputElement).value)}
+                    />
+                  </div>
+                  <div class="mini">
+                    Workspace will default to the gateway's default workspace.
+                  </div>
+                </div>
+                <div class="modalFooter">
+                  <button class="tinyBtn ghostBtn" @click=${() => (this.agentCreateOpen = false)}>
+                    Cancel
+                  </button>
+                  <button
+                    class="tinyBtn"
+                    ?disabled=${!this.connected || !this.agentCreateName.trim()}
+                    @click=${async () => {
+                      if (!this.client || !this.connected) {
+                        return;
+                      }
+                      const name = this.agentCreateName.trim();
+                      await this.client.request("agents.create", { name });
+                      this.agentCreateOpen = false;
+                      const st = this.toAgentsState();
+                      await loadAgents(st);
+                      this.syncFromAgentsState(st);
+                    }}
+                  >
+                    Create
+                  </button>
+                </div>
+              </div>
+            </div>`
+          : nothing}
+      </div>
+    `;
+  }
+
   private renderTasks() {
     const jobs = (this.cronJobs ?? [])
       .filter((j) => (j.agentId ?? "main") === "main")
@@ -1235,7 +1662,7 @@ export class MindSphereApp extends LitElement {
 
         <main>
           <div class="stage">
-            <div class="sphereWrap ${(this.chatOpen || this.tasksOpen) ? "hidden" : ""}">
+            <div class="sphereWrap ${(this.chatOpen || this.tasksOpen || this.agentsOpen) ? "hidden" : ""}">
               ${sphereStatus
                 ? html`<div
                     style="position:absolute; margin-bottom: 420px; font-weight:800; letter-spacing:0.12em; font-size:12px; color: rgba(226,232,240,0.9); text-transform:uppercase;"
@@ -1246,12 +1673,14 @@ export class MindSphereApp extends LitElement {
               <div class="sphere"></div>
             </div>
 
-            <div class="drawer ${(this.chatOpen || this.tasksOpen) ? "open" : "closed"}">
+            <div class="drawer ${(this.chatOpen || this.tasksOpen || this.agentsOpen) ? "open" : "closed"}">
               ${this.chatOpen
                 ? this.renderMessages()
                 : this.tasksOpen
                   ? this.renderTasks()
-                  : nothing}
+                  : this.agentsOpen
+                    ? this.renderAgentsPanel()
+                    : nothing}
             </div>
           </div>
 
@@ -1275,13 +1704,35 @@ export class MindSphereApp extends LitElement {
 
         <div class="composer">
           <div class="composerMeta">
-            <span>
-              ${this.chatSending || this.chatRunId
-                ? this.chatStream && this.chatStream.trim()
-                  ? "Thinking…"
-                  : "Working…"
-                : "Ready"}
-            </span>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <button
+                class="tinyBtn ghostBtn"
+                style="height:32px"
+                ?disabled=${!this.connected}
+                @click=${async () => {
+                  const next = !this.agentsOpen;
+                  this.agentsOpen = next;
+                  if (next) {
+                    this.chatOpen = false;
+                    this.tasksOpen = false;
+                    const st = this.toAgentsState();
+                    await loadAgents(st);
+                    this.syncFromAgentsState(st);
+                    await this.ensureAgentFilesLoaded(this.activeAgentId);
+                  }
+                }}
+                title=${this.agentsOpen ? "Hide agents" : "Show agents"}
+              >
+                Agents
+              </button>
+              <span>
+                ${this.chatSending || this.chatRunId
+                  ? this.chatStream && this.chatStream.trim()
+                    ? "Thinking…"
+                    : "Working…"
+                  : "Ready"}
+              </span>
+            </div>
             <span class="mini">Ctrl/Cmd+Enter to send</span>
           </div>
           <div class="composerInner">
