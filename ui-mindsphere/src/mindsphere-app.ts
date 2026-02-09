@@ -923,7 +923,12 @@ export class MindSphereApp extends LitElement {
   @state() agentFileContents: Record<string, string> = {};
   @state() agentFileSaving = false;
 
-  @state() agentPanelTab: "prompts" | "permissions" = "prompts";
+  @state() agentPanelTab: "prompts" | "permissions" | "memory" = "prompts";
+
+  @state() memoryAdding = false;
+  @state() memoryAddText = "";
+  @state() memoryAddFormat: "bullet" | "json" = "bullet";
+  @state() memoryAddCategory: "preference" | "fact" | "decision" | "entity" | "other" = "fact";
 
   @state() permissionsLoading = false;
   @state() permissionsError: string | null = null;
@@ -1058,6 +1063,29 @@ export class MindSphereApp extends LitElement {
       this.agentFileActive = pick;
       await loadAgentFileContent(st, agentId, pick, { force: true, preserveDraft: true });
       this.syncFromAgentFilesState(st);
+    }
+  }
+
+  private async ensureAgentMemoryLoaded(agentId: string) {
+    // Memory editor operates on the agent workspace's long-term memory file.
+    // The gateway exposes MEMORY.md (and legacy memory.md) via agents.files.*.
+    const st = this.toAgentFilesState();
+    await loadAgentFiles(st, agentId);
+    this.syncFromAgentFilesState(st);
+
+    const preferred = ["MEMORY.md", "memory.md"];
+    const available = st.agentFilesList?.files?.map((f) => f.name) ?? [];
+    const pick = preferred.find((n) => available.includes(n)) ?? preferred[0];
+
+    // Don't disturb the prompt editor selection; just make sure content is loaded.
+    await loadAgentFileContent(st, agentId, pick, { force: true, preserveDraft: true });
+    this.syncFromAgentFilesState(st);
+
+    // If the memory file is missing, seed a minimal header so the editor isn't blank.
+    const base = this.agentFileContents[pick] ?? "";
+    const draft = this.agentFileDrafts[pick] ?? "";
+    if (!base.trim() && !draft.trim()) {
+      this.agentFileDrafts = { ...this.agentFileDrafts, [pick]: "# Memory\n" };
     }
   }
 
@@ -1755,6 +1783,211 @@ export class MindSphereApp extends LitElement {
     `;
   }
 
+  private getAgentMemoryFileName(): "MEMORY.md" | "memory.md" {
+    const files = this.agentFilesList?.files ?? [];
+    const hasPrimary = files.some((f) => f.name === "MEMORY.md" && !f.missing);
+    const hasAlt = files.some((f) => f.name === "memory.md" && !f.missing);
+    if (hasPrimary) return "MEMORY.md";
+    if (hasAlt) return "memory.md";
+    return "MEMORY.md";
+  }
+
+  private getAgentMemoryDraft(): string {
+    const name = this.getAgentMemoryFileName();
+    return this.agentFileDrafts[name] ?? "";
+  }
+
+  private setAgentMemoryDraft(next: string) {
+    const name = this.getAgentMemoryFileName();
+    this.agentFileDrafts = { ...this.agentFileDrafts, [name]: next };
+  }
+
+  private parseMemoryBullets(text: string): Array<{ line: string; idx: number }> {
+    const lines = (text ?? "").split(/\r?\n/);
+    const out: Array<{ line: string; idx: number }> = [];
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i] ?? "";
+      if (ln.trim().startsWith("```")) {
+        inCode = !inCode;
+      }
+      if (inCode) continue;
+      if (/^\s*-\s+\S/.test(ln)) {
+        out.push({ line: ln.trim().replace(/^\s*-\s+/, ""), idx: i });
+      }
+    }
+    return out;
+  }
+
+  private deleteMemoryBulletAtLine(lineIdx: number) {
+    const name = this.getAgentMemoryFileName();
+    const cur = this.agentFileDrafts[name] ?? "";
+    const lines = cur.split(/\r?\n/);
+    if (lineIdx < 0 || lineIdx >= lines.length) {
+      return;
+    }
+    lines.splice(lineIdx, 1);
+    this.setAgentMemoryDraft(lines.join("\n"));
+  }
+
+  private appendMemoryEntry() {
+    const text = this.memoryAddText.trim();
+    if (!text) return;
+
+    const name = this.getAgentMemoryFileName();
+    const cur = this.agentFileDrafts[name] ?? "";
+
+    let addition = "";
+    if (this.memoryAddFormat === "json") {
+      const obj = {
+        topic: "memory",
+        category: this.memoryAddCategory,
+        text,
+      };
+      addition = `\n\n\`\`\`json\n${JSON.stringify(obj, null, 2)}\n\`\`\`\n`;
+    } else {
+      addition = `\n- ${text}\n`;
+    }
+
+    const base = cur.trim() ? cur.replace(/\s*$/, "") : "# Memory\n";
+    const next = base + addition;
+    this.setAgentMemoryDraft(next);
+    this.memoryAddText = "";
+  }
+
+  private renderAgentMemoryEditor() {
+    const name = this.getAgentMemoryFileName();
+    const draft = this.getAgentMemoryDraft();
+    const base = this.agentFileContents[name] ?? "";
+    const dirty = draft !== base;
+    const bullets = this.parseMemoryBullets(draft);
+
+    return html`
+      <div class="panel" style="padding: 12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div>
+            <div class="taskName">Memory for agent: <code>${this.activeAgentId}</code></div>
+            <div class="mini">File: <code>${name}</code> (agent workspace)</div>
+          </div>
+
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button
+              class="tinyBtn ghostBtn"
+              ?disabled=${!this.connected || this.agentFilesLoading}
+              @click=${async () => {
+                const st = this.toAgentFilesState();
+                await loadAgentFileContent(st, this.activeAgentId, name, { force: true, preserveDraft: false });
+                this.syncFromAgentFilesState(st);
+              }}
+            >
+              Reload
+            </button>
+            <button
+              class="tinyBtn"
+              ?disabled=${!this.connected || this.agentFileSaving || !dirty}
+              @click=${async () => {
+                const st = this.toAgentFilesState();
+                await saveAgentFile(st, this.activeAgentId, name, draft);
+                this.syncFromAgentFilesState(st);
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+
+        <div class="row2" style="margin-top: 12px;">
+          <div class="field">
+            <label>Add memory</label>
+            <input
+              .value=${this.memoryAddText}
+              placeholder="Remember: …"
+              @input=${(e: Event) => (this.memoryAddText = (e.target as HTMLInputElement).value)}
+              @keydown=${(e: KeyboardEvent) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  this.appendMemoryEntry();
+                }
+              }}
+            />
+          </div>
+          <div class="field">
+            <label>Format</label>
+            <div class="row2" style="gap:10px;">
+              <select
+                .value=${this.memoryAddFormat}
+                @change=${(e: Event) =>
+                  (this.memoryAddFormat = (e.target as HTMLSelectElement).value as any)}
+              >
+                <option value="bullet">bullet</option>
+                <option value="json">json</option>
+              </select>
+              <select
+                .value=${this.memoryAddCategory}
+                ?disabled=${this.memoryAddFormat !== "json"}
+                @change=${(e: Event) =>
+                  (this.memoryAddCategory = (e.target as HTMLSelectElement).value as any)}
+              >
+                <option value="preference">preference</option>
+                <option value="fact">fact</option>
+                <option value="decision">decision</option>
+                <option value="entity">entity</option>
+                <option value="other">other</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px; align-items:center; margin-top: 10px;">
+          <button class="tinyBtn" ?disabled=${!this.memoryAddText.trim()} @click=${() => this.appendMemoryEntry()}>
+            Add
+          </button>
+          <button
+            class="tinyBtn ghostBtn"
+            ?disabled=${!dirty}
+            @click=${() => {
+              this.setAgentMemoryDraft(base);
+            }}
+          >
+            Reset
+          </button>
+          ${this.agentFilesError ? html`<span class="error">${this.agentFilesError}</span>` : nothing}
+        </div>
+
+        <div class="panel" style="margin-top: 12px; padding: 12px;">
+          <div class="taskName">Entries</div>
+          <div class="mini">Parsed from <code>-</code> bullet lines (code blocks ignored).</div>
+          ${bullets.length === 0
+            ? html`<div class="mini" style="margin-top:8px;">No bullet memories found yet.</div>`
+            : html`<div style="display:flex; flex-direction:column; gap:8px; margin-top: 10px;">
+                ${bullets.map(
+                  (b) => html`<div style="display:flex; gap:10px; align-items:flex-start;">
+                    <div style="flex:1;" class="mini">${b.line}</div>
+                    <button class="tinyBtn ghostBtn" @click=${() => this.deleteMemoryBulletAtLine(b.idx)}>
+                      Delete
+                    </button>
+                  </div>`,
+                )}
+              </div>`}
+        </div>
+
+        <details style="margin-top: 12px;" ?open=${false}>
+          <summary class="mini" style="cursor:pointer;">Advanced editor</summary>
+          <div class="field" style="margin-top: 10px;">
+            <textarea
+              style="min-height: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"
+              .value=${draft}
+              @input=${(e: InputEvent) => {
+                const v = (e.target as HTMLTextAreaElement).value;
+                this.setAgentMemoryDraft(v);
+              }}
+            ></textarea>
+          </div>
+        </details>
+      </div>
+    `;
+  }
+
   private syncFromAgentFilesState(next: AgentFilesState) {
     this.agentFilesLoading = next.agentFilesLoading;
     this.agentFilesError = next.agentFilesError;
@@ -1783,6 +2016,9 @@ export class MindSphereApp extends LitElement {
 
     if (this.agentPanelTab === "permissions") {
       void this.loadAgentPermissions(agentId);
+    }
+    if (this.agentPanelTab === "memory") {
+      void this.ensureAgentMemoryLoaded(agentId);
     }
   }
 
@@ -2450,6 +2686,15 @@ export class MindSphereApp extends LitElement {
                 >
                   Permissions
                 </button>
+                <button
+                  class=${this.agentPanelTab === "memory" ? "active" : ""}
+                  @click=${async () => {
+                    this.agentPanelTab = "memory";
+                    await this.ensureAgentMemoryLoaded(this.activeAgentId);
+                  }}
+                >
+                  Memory
+                </button>
               </div>
             </div>
 
@@ -2522,7 +2767,9 @@ export class MindSphereApp extends LitElement {
                     ></textarea>
                   </div>
                 `
-              : this.renderAgentPermissionsEditor()}
+              : this.agentPanelTab === "permissions"
+                ? this.renderAgentPermissionsEditor()
+                : this.renderAgentMemoryEditor()}
             
           </div>
         </div>
