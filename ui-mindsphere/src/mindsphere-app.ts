@@ -565,7 +565,7 @@ export class MindSphereApp extends LitElement {
     }
 
     .agentEditor {
-      padding: 14px 16px 18px;
+      padding: 14px 16px 70px;
       overflow: hidden;
       display: grid;
       grid-template-rows: auto auto 1fr;
@@ -575,8 +575,6 @@ export class MindSphereApp extends LitElement {
 
     .agentEditor textarea {
       min-height: 0;
-      height: 100%;
-      max-height: none;
     }
 
     .seg {
@@ -748,7 +746,6 @@ export class MindSphereApp extends LitElement {
     }
 
     textarea {
-      width: 100%;
       resize: none;
       min-height: 46px;
       /* no fixed height: allow natural sizing */
@@ -1782,7 +1779,6 @@ export class MindSphereApp extends LitElement {
             </div>
 
             <div class="field">
-              <label>Content</label>
               <textarea
                 .value=${editorValue}
                 @input=${(e: InputEvent) => {

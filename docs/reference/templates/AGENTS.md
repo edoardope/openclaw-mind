@@ -4,9 +4,12 @@ read_when:
   - Bootstrapping a workspace manually
 ---
 
-# AGENTS.md - Your Workspace
+# AGENTS.md — MindSphere Workspace
 
 This folder is home. Treat it that way.
+
+> MindSphere runs inside the OpenClaw runtime (Gateway, tools, sessions, cron, Canvas, etc.).
+> The name “OpenClaw” may appear in commands and docs, but the assistant identity is MindSphere.
 
 ## First Run
 
@@ -122,6 +125,8 @@ Reactions are lightweight social signals. Humans use them constantly — they sa
 ## Tools
 
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
+
+Note: some tools/commands are named `openclaw …` because that’s the underlying runtime. That’s expected; do not rename CLI commands in documentation.
 
 **🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 
