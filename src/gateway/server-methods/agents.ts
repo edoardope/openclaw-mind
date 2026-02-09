@@ -10,6 +10,7 @@ import {
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
+  DEFAULT_CONTEXT_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
   DEFAULT_MEMORY_ALT_FILENAME,
   DEFAULT_MEMORY_FILENAME,
@@ -284,7 +285,9 @@ export const agentsHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const workspaceDir = resolveUserPath(String(params.workspace ?? "").trim());
+    const workspaceRaw = String(params.workspace ?? "").trim();
+    const defaultWorkspaceRaw = String(cfg.agents?.defaults?.workspace ?? "").trim();
+    const workspaceDir = resolveUserPath(workspaceRaw || defaultWorkspaceRaw || process.cwd());
 
     // Resolve agentDir against the config we're about to persist (vs the pre-write config),
     // so subsequent resolutions can't disagree about the agent's directory.
