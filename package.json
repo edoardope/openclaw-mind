@@ -70,7 +70,7 @@
     "openclaw": "node scripts/run-node.mjs",
     "openclaw:rpc": "node scripts/run-node.mjs agent --mode rpc --json",
     "plugins:sync": "node --import tsx scripts/sync-plugin-versions.ts",
-    "prepack": "pnpm build && pnpm ui:build",
+    "prepack": "pnpm build && pnpm ui:build && pnpm ui:mindsphere:build",
     "prepare": "command -v git >/dev/null 2>&1 && git config core.hooksPath git-hooks || exit 0",
     "protocol:check": "pnpm protocol:gen && pnpm protocol:gen:swift && git diff --exit-code -- dist/protocol.schema.json apps/macos/Sources/OpenClawProtocol/GatewayModels.swift",
     "protocol:gen": "node --import tsx scripts/protocol-gen.ts",
@@ -102,7 +102,10 @@
     "tui:dev": "OPENCLAW_PROFILE=dev CLAWDBOT_PROFILE=dev node scripts/run-node.mjs --dev tui",
     "ui:build": "node scripts/ui.js build",
     "ui:dev": "node scripts/ui.js dev",
-    "ui:install": "node scripts/ui.js install"
+    "ui:install": "node scripts/ui.js install",
+    "ui:mindsphere:build": "node scripts/mindsphere-ui.js build",
+    "ui:mindsphere:dev": "node scripts/mindsphere-ui.js dev",
+    "ui:mindsphere:install": "node scripts/mindsphere-ui.js install"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.14.1",

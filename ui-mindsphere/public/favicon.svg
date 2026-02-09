@@ -1,0 +1,11 @@
+<svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mindsphere-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <circle cx="60" cy="60" r="52" fill="url(#mindsphere-gradient)"/>
+  <circle cx="60" cy="60" r="52" stroke="#0b1220" stroke-opacity="0.35" stroke-width="4"/>
+  <text x="60" y="71" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-size="44" font-weight="800" fill="#050810" fill-opacity="0.88">MS</text>
+</svg>

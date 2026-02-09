@@ -25,6 +25,7 @@ import {
   handleControlUiHttpRequest,
   type ControlUiRootState,
 } from "./control-ui.js";
+import { handleMindsphereUiHttpRequest } from "./mindsphere-ui.js";
 import { applyHookMappings } from "./hooks-mapping.js";
 import {
   extractHookToken,
@@ -376,6 +377,11 @@ export function createGatewayHttpServer(opts: {
           return;
         }
       }
+      // MindSphere UI is served under /ms regardless of Control UI basePath.
+      if (handleMindsphereUiHttpRequest(req, res, { config: configSnapshot })) {
+        return;
+      }
+
       if (controlUiEnabled) {
         if (
           handleControlUiAvatarRequest(req, res, {
