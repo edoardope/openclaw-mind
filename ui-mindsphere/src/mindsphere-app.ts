@@ -1078,9 +1078,10 @@ export class MindSphereApp extends LitElement {
       const cfg = (snap?.config ?? {}) as any;
       const list: any[] = Array.isArray(cfg?.agents?.list) ? cfg.agents.list : [];
       const idx = list.findIndex((a) => (a?.id ?? "") === agentId);
-      const toolsOverride = idx >= 0 ? (list[idx]?.tools ?? null) : null;
+      const agentEntry = idx >= 0 ? (list[idx] ?? null) : null;
 
-      const text = JSON.stringify(toolsOverride ?? {}, null, 2);
+      // Edit the full agent config entry (not just tools), so the UI can cover everything.
+      const text = JSON.stringify(agentEntry ?? { id: agentId }, null, 2);
       this.permissionsDraft = text;
       this.permissionsOriginal = text;
       this.permissionsDirty = false;
@@ -1105,11 +1106,16 @@ export class MindSphereApp extends LitElement {
     this.permissionsApplying = true;
     this.permissionsError = null;
     try {
-      let nextTools: any;
+      let nextAgent: any;
       try {
-        nextTools = JSON.parse(this.permissionsDraft || "{}");
+        nextAgent = JSON.parse(this.permissionsDraft || "{}");
       } catch {
-        this.permissionsError = "Invalid JSON. Permissions must be valid JSON.";
+        this.permissionsError = "Invalid JSON. Agent config must be valid JSON.";
+        return;
+      }
+
+      if (!nextAgent || typeof nextAgent !== "object" || Array.isArray(nextAgent)) {
+        this.permissionsError = "Invalid JSON. Agent config must be an object.";
         return;
       }
 
@@ -1120,23 +1126,15 @@ export class MindSphereApp extends LitElement {
       const list: any[] = cfg.agents.list;
       let idx = list.findIndex((a) => (a?.id ?? "") === agentId);
       if (idx < 0) {
-        // Be helpful: allow configuring tools for agents that exist in the runtime
-        // but don't have an explicit config.agents.list entry yet (e.g. "main").
         list.push({ id: agentId });
         idx = list.length - 1;
       }
 
-      // Normalize empty object => remove override (clean config).
-      const isEmpty =
-        nextTools && typeof nextTools === "object" && !Array.isArray(nextTools)
-          ? Object.keys(nextTools).length === 0
-          : false;
+      // Enforce the id (avoid accidental renames through the editor).
+      nextAgent.id = agentId;
 
-      if (isEmpty) {
-        delete list[idx].tools;
-      } else {
-        list[idx].tools = nextTools;
-      }
+      // Replace the agent entry with the edited one.
+      list[idx] = nextAgent;
 
       const raw = serializeConfigForm(cfg);
       await this.client.request("config.apply", {
@@ -1219,25 +1217,44 @@ export class MindSphereApp extends LitElement {
   }
 
   private renderAgentPermissionsEditor() {
-    const obj = this.getPermissionsObj();
+    const agent = this.getPermissionsObj();
+    const tools = agent?.tools ?? {};
 
-    const profile = obj?.profile ?? "";
-    const allowText = Array.isArray(obj?.allow) ? obj.allow.join("\n") : "";
-    const alsoAllowText = Array.isArray(obj?.alsoAllow) ? obj.alsoAllow.join("\n") : "";
-    const denyText = Array.isArray(obj?.deny) ? obj.deny.join("\n") : "";
+    const workspace = agent?.workspace ?? "";
+    const skillsText = Array.isArray(agent?.skills) ? agent.skills.join("\n") : "";
 
-    const elevatedEnabled = obj?.elevated?.enabled;
+    const modelPrimary = agent?.model?.primary ?? (typeof agent?.model === "string" ? agent.model : "");
+    const modelFallbacksText = Array.isArray(agent?.model?.fallbacks) ? agent.model.fallbacks.join("\n") : "";
 
-    const execHost = obj?.exec?.host ?? "";
-    const execSecurity = obj?.exec?.security ?? "";
-    const execAsk = obj?.exec?.ask ?? "";
-    const execNode = obj?.exec?.node ?? "";
-    const execTimeout = obj?.exec?.timeoutSec ?? "";
-    const execBackground = obj?.exec?.backgroundMs ?? "";
-    const execNotifyOnExit = obj?.exec?.notifyOnExit ?? false;
+    const memoryEnabled = agent?.memorySearch?.enabled;
+    const memorySourcesText = Array.isArray(agent?.memorySearch?.sources) ? agent.memorySearch.sources.join("\n") : "";
+    const memoryExtraPathsText = Array.isArray(agent?.memorySearch?.extraPaths) ? agent.memorySearch.extraPaths.join("\n") : "";
+    const memoryProvider = agent?.memorySearch?.provider ?? "";
 
-    const sandboxAllowText = Array.isArray(obj?.sandbox?.tools?.allow) ? obj.sandbox.tools.allow.join("\n") : "";
-    const sandboxDenyText = Array.isArray(obj?.sandbox?.tools?.deny) ? obj.sandbox.tools.deny.join("\n") : "";
+    const sandboxMode = agent?.sandbox?.mode ?? "";
+    const sandboxWorkspaceAccess = agent?.sandbox?.workspaceAccess ?? "";
+    const sandboxSessionToolsVisibility = agent?.sandbox?.sessionToolsVisibility ?? "";
+    const sandboxScope = agent?.sandbox?.scope ?? "";
+
+    const subagentsAllowText = Array.isArray(agent?.subagents?.allowAgents) ? agent.subagents.allowAgents.join("\n") : "";
+
+    const profile = tools?.profile ?? "";
+    const allowText = Array.isArray(tools?.allow) ? tools.allow.join("\n") : "";
+    const alsoAllowText = Array.isArray(tools?.alsoAllow) ? tools.alsoAllow.join("\n") : "";
+    const denyText = Array.isArray(tools?.deny) ? tools.deny.join("\n") : "";
+
+    const elevatedEnabled = tools?.elevated?.enabled;
+
+    const execHost = tools?.exec?.host ?? "";
+    const execSecurity = tools?.exec?.security ?? "";
+    const execAsk = tools?.exec?.ask ?? "";
+    const execNode = tools?.exec?.node ?? "";
+    const execTimeout = tools?.exec?.timeoutSec ?? "";
+    const execBackground = tools?.exec?.backgroundMs ?? "";
+    const execNotifyOnExit = tools?.exec?.notifyOnExit ?? false;
+
+    const sandboxAllowText = Array.isArray(tools?.sandbox?.tools?.allow) ? tools.sandbox.tools.allow.join("\n") : "";
+    const sandboxDenyText = Array.isArray(tools?.sandbox?.tools?.deny) ? tools.sandbox.tools.deny.join("\n") : "";
 
     return html`
       <div class="field" style="margin-top: 12px;">
@@ -1263,10 +1280,237 @@ export class MindSphereApp extends LitElement {
           </div>
         </div>
         <div class="mini">
-          These settings edit <code>config.agents.list[].tools</code> for the active agent.
+          These settings edit <code>config.agents.list[]</code> for the active agent (full agent entry).
         </div>
         ${this.permissionsLoading ? html`<div class="mini">Loading…</div>` : nothing}
         ${this.permissionsError ? html`<div class="error">${this.permissionsError}</div>` : nothing}
+      </div>
+
+      <div class="panel" style="margin-top: 14px; padding: 12px;">
+        <div class="taskName">Agent settings</div>
+        <div class="mini">Common agent-level settings (workspace, model, sandbox, skills, memory search, subagents).</div>
+
+        <div class="row2" style="margin-top: 10px;">
+          <div class="field">
+            <label>Workspace</label>
+            <input
+              .value=${workspace}
+              placeholder="C:\\path\\to\\workspace"
+              ?disabled=${agent === null}
+              @input=${(e: Event) => {
+                const v = (e.target as HTMLInputElement).value.trim();
+                this.updatePermissionsField(["workspace"], v || undefined);
+              }}
+            />
+          </div>
+          <div class="field">
+            <label>Model primary</label>
+            <input
+              .value=${modelPrimary}
+              placeholder="openai-codex/gpt-5.3-codex"
+              ?disabled=${agent === null}
+              @input=${(e: Event) => {
+                const v = (e.target as HTMLInputElement).value.trim();
+                if (!v) {
+                  this.updatePermissionsField(["model"], undefined);
+                  return;
+                }
+                this.updatePermissionsField(["model", "primary"], v);
+              }}
+            />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Model fallbacks (one per line)</label>
+          <textarea
+            style="min-height: 80px;"
+            .value=${modelFallbacksText}
+            ?disabled=${agent === null}
+            @input=${(e: InputEvent) => {
+              const v = (e.target as HTMLTextAreaElement).value;
+              const list = this.parseCsvList(v);
+              this.updatePermissionsField(["model", "fallbacks"], list.length ? list : undefined);
+            }}
+          ></textarea>
+        </div>
+
+        <div class="field">
+          <label>Skills allowlist (one per line; unset = all skills; set empty array = none)</label>
+          <textarea
+            style="min-height: 80px;"
+            .value=${skillsText}
+            placeholder="coding-agent"
+            ?disabled=${agent === null}
+            @input=${(e: InputEvent) => {
+              const raw = (e.target as HTMLTextAreaElement).value;
+              const list = this.parseCsvList(raw);
+              // When textarea is truly empty => unset (all skills allowed).
+              if (!raw.trim()) {
+                this.updatePermissionsField(["skills"], undefined);
+                return;
+              }
+              this.updatePermissionsField(["skills"], list);
+            }}
+          ></textarea>
+        </div>
+
+        <div class="row2">
+          <div class="field">
+            <label>Memory search enabled</label>
+            <select
+              .value=${typeof memoryEnabled === "boolean" ? String(memoryEnabled) : ""}
+              ?disabled=${agent === null}
+              @change=${(e: Event) => {
+                const raw = (e.target as HTMLSelectElement).value;
+                if (!raw) {
+                  this.updatePermissionsField(["memorySearch", "enabled"], undefined);
+                  return;
+                }
+                this.updatePermissionsField(["memorySearch", "enabled"], raw === "true");
+              }}
+            >
+              <option value="">(default)</option>
+              <option value="true">enabled</option>
+              <option value="false">disabled</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Memory search provider</label>
+            <select
+              .value=${memoryProvider}
+              ?disabled=${agent === null}
+              @change=${(e: Event) => {
+                const v = (e.target as HTMLSelectElement).value;
+                this.updatePermissionsField(["memorySearch", "provider"], v || undefined);
+              }}
+            >
+              <option value="">(default)</option>
+              <option value="openai">openai</option>
+              <option value="gemini">gemini</option>
+              <option value="local">local</option>
+              <option value="voyage">voyage</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div class="field">
+            <label>Memory sources (one per line)</label>
+            <textarea
+              style="min-height: 80px;"
+              .value=${memorySourcesText}
+              placeholder="memory\nsessions"
+              ?disabled=${agent === null}
+              @input=${(e: InputEvent) => {
+                const v = (e.target as HTMLTextAreaElement).value;
+                const list = this.parseCsvList(v);
+                this.updatePermissionsField(["memorySearch", "sources"], list.length ? list : undefined);
+              }}
+            ></textarea>
+          </div>
+          <div class="field">
+            <label>Memory extraPaths (one per line)</label>
+            <textarea
+              style="min-height: 80px;"
+              .value=${memoryExtraPathsText}
+              ?disabled=${agent === null}
+              @input=${(e: InputEvent) => {
+                const v = (e.target as HTMLTextAreaElement).value;
+                const list = this.parseCsvList(v);
+                this.updatePermissionsField(["memorySearch", "extraPaths"], list.length ? list : undefined);
+              }}
+            ></textarea>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 12px; padding: 12px;">
+          <div class="taskName">Sandbox (agent)</div>
+          <div class="mini">Controls sandbox behavior for this agent (not tool policy).</div>
+
+          <div class="row2" style="margin-top: 10px;">
+            <div class="field">
+              <label>Mode</label>
+              <select
+                .value=${sandboxMode}
+                ?disabled=${agent === null}
+                @change=${(e: Event) => {
+                  const v = (e.target as HTMLSelectElement).value;
+                  this.updatePermissionsField(["sandbox", "mode"], v || undefined);
+                }}
+              >
+                <option value="">(default)</option>
+                <option value="off">off</option>
+                <option value="non-main">non-main</option>
+                <option value="all">all</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Workspace access</label>
+              <select
+                .value=${sandboxWorkspaceAccess}
+                ?disabled=${agent === null}
+                @change=${(e: Event) => {
+                  const v = (e.target as HTMLSelectElement).value;
+                  this.updatePermissionsField(["sandbox", "workspaceAccess"], v || undefined);
+                }}
+              >
+                <option value="">(default)</option>
+                <option value="none">none</option>
+                <option value="ro">ro</option>
+                <option value="rw">rw</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row2">
+            <div class="field">
+              <label>Session tools visibility</label>
+              <select
+                .value=${sandboxSessionToolsVisibility}
+                ?disabled=${agent === null}
+                @change=${(e: Event) => {
+                  const v = (e.target as HTMLSelectElement).value;
+                  this.updatePermissionsField(["sandbox", "sessionToolsVisibility"], v || undefined);
+                }}
+              >
+                <option value="">(default)</option>
+                <option value="spawned">spawned</option>
+                <option value="all">all</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Scope</label>
+              <select
+                .value=${sandboxScope}
+                ?disabled=${agent === null}
+                @change=${(e: Event) => {
+                  const v = (e.target as HTMLSelectElement).value;
+                  this.updatePermissionsField(["sandbox", "scope"], v || undefined);
+                }}
+              >
+                <option value="">(default)</option>
+                <option value="session">session</option>
+                <option value="agent">agent</option>
+                <option value="shared">shared</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field" style="margin-top: 12px;">
+          <label>Subagents allowAgents (one per line; use * to allow any)</label>
+          <textarea
+            style="min-height: 80px;"
+            .value=${subagentsAllowText}
+            ?disabled=${agent === null}
+            @input=${(e: InputEvent) => {
+              const v = (e.target as HTMLTextAreaElement).value;
+              const list = this.parseCsvList(v);
+              this.updatePermissionsField(["subagents", "allowAgents"], list.length ? list : undefined);
+            }}
+          ></textarea>
+        </div>
       </div>
 
       <div class="row2">
@@ -1274,10 +1518,10 @@ export class MindSphereApp extends LitElement {
           <label>Tool profile</label>
           <select
             .value=${profile}
-            ?disabled=${obj === null}
+            ?disabled=${agent === null}
             @change=${(e: Event) => {
               const v = (e.target as HTMLSelectElement).value;
-              this.updatePermissionsField(["profile"], v || undefined);
+              this.updatePermissionsField(["tools", "profile"], v || undefined);
             }}
           >
             <option value="">(none)</option>
@@ -1291,15 +1535,15 @@ export class MindSphereApp extends LitElement {
           <label>Elevated mode</label>
           <select
             .value=${typeof elevatedEnabled === "boolean" ? String(elevatedEnabled) : ""}
-            ?disabled=${obj === null}
+            ?disabled=${agent === null}
             @change=${(e: Event) => {
               const raw = (e.target as HTMLSelectElement).value;
               if (!raw) {
                 // remove override
-                this.updatePermissionsField(["elevated"], undefined);
+                this.updatePermissionsField(["tools", "elevated"], undefined);
                 return;
               }
-              this.updatePermissionsField(["elevated", "enabled"], raw === "true");
+              this.updatePermissionsField(["tools", "elevated", "enabled"], raw === "true");
             }}
           >
             <option value="">(default)</option>
@@ -1315,11 +1559,11 @@ export class MindSphereApp extends LitElement {
           <textarea
             style="min-height: 120px;"
             .value=${allowText}
-            ?disabled=${obj === null}
+            ?disabled=${agent === null}
             @input=${(e: InputEvent) => {
               const v = (e.target as HTMLTextAreaElement).value;
               const list = this.parseCsvList(v);
-              this.updatePermissionsField(["allow"], list.length ? list : undefined);
+              this.updatePermissionsField(["tools", "allow"], list.length ? list : undefined);
             }}
           ></textarea>
         </div>
@@ -1328,11 +1572,11 @@ export class MindSphereApp extends LitElement {
           <textarea
             style="min-height: 120px;"
             .value=${denyText}
-            ?disabled=${obj === null}
+            ?disabled=${agent === null}
             @input=${(e: InputEvent) => {
               const v = (e.target as HTMLTextAreaElement).value;
               const list = this.parseCsvList(v);
-              this.updatePermissionsField(["deny"], list.length ? list : undefined);
+              this.updatePermissionsField(["tools", "deny"], list.length ? list : undefined);
             }}
           ></textarea>
         </div>
@@ -1343,11 +1587,11 @@ export class MindSphereApp extends LitElement {
         <textarea
           style="min-height: 80px;"
           .value=${alsoAllowText}
-          ?disabled=${obj === null}
+          ?disabled=${agent === null}
           @input=${(e: InputEvent) => {
             const v = (e.target as HTMLTextAreaElement).value;
             const list = this.parseCsvList(v);
-            this.updatePermissionsField(["alsoAllow"], list.length ? list : undefined);
+            this.updatePermissionsField(["tools", "alsoAllow"], list.length ? list : undefined);
           }}
         ></textarea>
       </div>
@@ -1361,9 +1605,9 @@ export class MindSphereApp extends LitElement {
             <label>Host</label>
             <select
               .value=${execHost}
-              ?disabled=${obj === null}
+              ?disabled=${agent === null}
               @change=${(e: Event) =>
-                this.updatePermissionsField(["exec", "host"], (e.target as HTMLSelectElement).value || undefined)}
+                this.updatePermissionsField(["tools", "exec", "host"], (e.target as HTMLSelectElement).value || undefined)}
             >
               <option value="">(default)</option>
               <option value="sandbox">sandbox</option>
@@ -1375,9 +1619,9 @@ export class MindSphereApp extends LitElement {
             <label>Security</label>
             <select
               .value=${execSecurity}
-              ?disabled=${obj === null}
+              ?disabled=${agent === null}
               @change=${(e: Event) =>
-                this.updatePermissionsField(["exec", "security"], (e.target as HTMLSelectElement).value || undefined)}
+                this.updatePermissionsField(["tools", "exec", "security"], (e.target as HTMLSelectElement).value || undefined)}
             >
               <option value="">(default)</option>
               <option value="deny">deny</option>
@@ -1392,9 +1636,9 @@ export class MindSphereApp extends LitElement {
             <label>Ask mode</label>
             <select
               .value=${execAsk}
-              ?disabled=${obj === null}
+              ?disabled=${agent === null}
               @change=${(e: Event) =>
-                this.updatePermissionsField(["exec", "ask"], (e.target as HTMLSelectElement).value || undefined)}
+                this.updatePermissionsField(["tools", "exec", "ask"], (e.target as HTMLSelectElement).value || undefined)}
             >
               <option value="">(default)</option>
               <option value="off">off</option>
@@ -1407,9 +1651,9 @@ export class MindSphereApp extends LitElement {
             <input
               .value=${execNode}
               placeholder="node id/name"
-              ?disabled=${obj === null}
+              ?disabled=${agent === null}
               @input=${(e: Event) =>
-                this.updatePermissionsField(["exec", "node"], (e.target as HTMLInputElement).value.trim() || undefined)}
+                this.updatePermissionsField(["tools", "exec", "node"], (e.target as HTMLInputElement).value.trim() || undefined)}
             />
           </div>
         </div>
@@ -1422,11 +1666,11 @@ export class MindSphereApp extends LitElement {
               inputmode="numeric"
               .value=${String(execTimeout ?? "")}
               placeholder=""
-              ?disabled=${obj === null}
+              ?disabled=${agent === null}
               @input=${(e: Event) => {
                 const raw = (e.target as HTMLInputElement).value;
                 const n = raw.trim() ? Number(raw) : NaN;
-                this.updatePermissionsField(["exec", "timeoutSec"], Number.isFinite(n) ? n : undefined);
+                this.updatePermissionsField(["tools", "exec", "timeoutSec"], Number.isFinite(n) ? n : undefined);
               }}
             />
           </div>
@@ -1437,11 +1681,11 @@ export class MindSphereApp extends LitElement {
               inputmode="numeric"
               .value=${String(execBackground ?? "")}
               placeholder=""
-              ?disabled=${obj === null}
+              ?disabled=${agent === null}
               @input=${(e: Event) => {
                 const raw = (e.target as HTMLInputElement).value;
                 const n = raw.trim() ? Number(raw) : NaN;
-                this.updatePermissionsField(["exec", "backgroundMs"], Number.isFinite(n) ? n : undefined);
+                this.updatePermissionsField(["tools", "exec", "backgroundMs"], Number.isFinite(n) ? n : undefined);
               }}
             />
           </div>
@@ -1451,9 +1695,9 @@ export class MindSphereApp extends LitElement {
           <input
             type="checkbox"
             .checked=${Boolean(execNotifyOnExit)}
-            ?disabled=${obj === null}
+            ?disabled=${agent === null}
             @change=${(e: Event) =>
-              this.updatePermissionsField(["exec", "notifyOnExit"], (e.target as HTMLInputElement).checked)}
+              this.updatePermissionsField(["tools", "exec", "notifyOnExit"], (e.target as HTMLInputElement).checked)}
           />
           <span>Notify on exec exit</span>
         </label>
@@ -1469,11 +1713,11 @@ export class MindSphereApp extends LitElement {
             <textarea
               style="min-height: 90px;"
               .value=${sandboxAllowText}
-              ?disabled=${obj === null}
+              ?disabled=${agent === null}
               @input=${(e: InputEvent) => {
                 const v = (e.target as HTMLTextAreaElement).value;
                 const list = this.parseCsvList(v);
-                this.updatePermissionsField(["sandbox", "tools", "allow"], list.length ? list : undefined);
+                this.updatePermissionsField(["tools", "sandbox", "tools", "allow"], list.length ? list : undefined);
               }}
             ></textarea>
           </div>
@@ -1482,11 +1726,11 @@ export class MindSphereApp extends LitElement {
             <textarea
               style="min-height: 90px;"
               .value=${sandboxDenyText}
-              ?disabled=${obj === null}
+              ?disabled=${agent === null}
               @input=${(e: InputEvent) => {
                 const v = (e.target as HTMLTextAreaElement).value;
                 const list = this.parseCsvList(v);
-                this.updatePermissionsField(["sandbox", "tools", "deny"], list.length ? list : undefined);
+                this.updatePermissionsField(["tools", "sandbox", "tools", "deny"], list.length ? list : undefined);
               }}
             ></textarea>
           </div>
