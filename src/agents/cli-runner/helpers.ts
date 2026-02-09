@@ -13,6 +13,7 @@ import { buildTtsSystemPromptHint } from "../../tts/tts.js";
 import { resolveDefaultModelForAgent } from "../model-selection.js";
 import { detectRuntimeShell } from "../shell-utils.js";
 import { buildSystemPromptParams } from "../system-prompt-params.js";
+import { buildWorkingContextPromptSync } from "../working-context.js";
 import { buildAgentSystemPrompt } from "../system-prompt.js";
 
 const CLI_RUN_QUEUE = new Map<string, Promise<unknown>>();
@@ -231,10 +232,12 @@ export function buildSystemPrompt(params: {
     },
   });
   const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
+  const workingContextPrompt = buildWorkingContextPromptSync(params.workspaceDir);
+  const extraSystemPrompt = [params.extraSystemPrompt, workingContextPrompt].filter(Boolean).join("\n\n");
   return buildAgentSystemPrompt({
     workspaceDir: params.workspaceDir,
     defaultThinkLevel: params.defaultThinkLevel,
-    extraSystemPrompt: params.extraSystemPrompt,
+    extraSystemPrompt,
     ownerNumbers: params.ownerNumbers,
     reasoningTagHint: false,
     heartbeatPrompt: params.heartbeatPrompt,

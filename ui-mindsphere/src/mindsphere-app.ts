@@ -923,7 +923,12 @@ export class MindSphereApp extends LitElement {
   @state() agentFileContents: Record<string, string> = {};
   @state() agentFileSaving = false;
 
-  @state() agentPanelTab: "prompts" | "permissions" | "memory" = "prompts";
+  @state() agentPanelTab: "prompts" | "permissions" | "memory" | "context" = "prompts";
+
+  @state() contextPathDraft = "";
+  @state() contextLoading = false;
+  @state() contextError: string | null = null;
+  @state() contextDirty = false;
 
   @state() memoryAdding = false;
   @state() memoryAddText = "";
@@ -1070,10 +1075,8 @@ export class MindSphereApp extends LitElement {
 
   private async ensureAgentMemoryLoaded(agentId: string) {
     // Memory editor operates on the agent workspace's long-term memory file.
-    // The gateway exposes MEMORY.md (and legacy memory.md) via agents.files.*.
+    // The gateway exposes MEMORY.md via agents.files.*.
     const st = this.toAgentFilesState();
-    await loadAgentFiles(st, agentId);
-    this.syncFromAgentFilesState(st);
 
     // Refresh list first so daily files show up.
     await loadAgentFiles(st, agentId);
@@ -1105,6 +1108,115 @@ export class MindSphereApp extends LitElement {
         this.agentFileDrafts = { ...this.agentFileDrafts, [daily]: "# Daily memory\n" };
       }
     }
+  }
+
+  private async ensureAgentContextLoaded(agentId: string) {
+    if (!this.client || !this.connected) {
+      return;
+    }
+    if (this.contextLoading) {
+      return;
+    }
+    this.contextLoading = true;
+    this.contextError = null;
+    try {
+      const st = this.toAgentFilesState();
+      await loadAgentFiles(st, agentId);
+      await loadAgentFileContent(st, agentId, "CONTEXT.md", { force: true, preserveDraft: true });
+      this.syncFromAgentFilesState(st);
+
+      const base = this.agentFileContents["CONTEXT.md"] ?? "";
+      // pick first non-comment line
+      const first = base
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find((l) => l && !l.startsWith("#") && !l.startsWith("<!--")) ?? "";
+      this.contextPathDraft = first;
+      this.contextDirty = false;
+    } catch (err) {
+      this.contextError = String(err);
+    } finally {
+      this.contextLoading = false;
+    }
+  }
+
+  private renderAgentContextEditor() {
+    const fileName = "CONTEXT.md";
+    const current = (this.agentFileContents[fileName] ?? "").trim();
+
+    return html`
+      <div class="panel" style="padding: 12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div>
+            <div class="taskName">Working context</div>
+            <div class="mini">File: <code>${fileName}</code> (per-agent, persists until changed)</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button
+              class="tinyBtn ghostBtn"
+              ?disabled=${!this.connected || this.contextLoading}
+              @click=${async () => await this.ensureAgentContextLoaded(this.activeAgentId)}
+            >
+              Reload
+            </button>
+            <button
+              class="tinyBtn"
+              ?disabled=${!this.connected || this.agentFileSaving || !this.contextDirty}
+              @click=${async () => {
+                const content = `# Context\n\n${this.contextPathDraft.trim()}\n`;
+                const st = this.toAgentFilesState();
+                await saveAgentFile(st, this.activeAgentId, fileName, content);
+                this.syncFromAgentFilesState(st);
+                this.contextDirty = false;
+              }}
+            >
+              Save
+            </button>
+            <button
+              class="tinyBtn ghostBtn"
+              ?disabled=${!this.connected || this.agentFileSaving || !this.contextPathDraft.trim()}
+              @click=${async () => {
+                // Clear context by writing header only.
+                const content = "# Context\n";
+                const st = this.toAgentFilesState();
+                await saveAgentFile(st, this.activeAgentId, fileName, content);
+                this.syncFromAgentFilesState(st);
+                this.contextPathDraft = "";
+                this.contextDirty = false;
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+
+        <div class="mini" style="margin-top: 8px;">
+          Set a directory path (can be outside the workspace). The agent will see it in its system prompt and treat it
+          as the preferred working context until you change/clear it.
+        </div>
+
+        <div class="field" style="margin-top: 12px;">
+          <label>Path</label>
+          <input
+            .value=${this.contextPathDraft}
+            placeholder="D:\\Projects\\foo"
+            ?disabled=${this.contextLoading}
+            @input=${(e: Event) => {
+              this.contextPathDraft = (e.target as HTMLInputElement).value;
+              this.contextDirty = true;
+            }}
+          />
+        </div>
+
+        ${this.contextLoading ? html`<div class="mini">Loading…</div>` : nothing}
+        ${this.contextError ? html`<div class="error">${this.contextError}</div>` : nothing}
+
+        <details style="margin-top: 12px;" ?open=${false}>
+          <summary class="mini" style="cursor:pointer;">Raw file preview</summary>
+          <pre class="mini" style="white-space: pre-wrap; margin-top: 10px;">${current}</pre>
+        </details>
+      </div>
+    `;
   }
 
   private async loadAgentPermissions(agentId: string) {
@@ -2117,6 +2229,9 @@ export class MindSphereApp extends LitElement {
     if (this.agentPanelTab === "memory") {
       void this.ensureAgentMemoryLoaded(agentId);
     }
+    if (this.agentPanelTab === "context") {
+      void this.ensureAgentContextLoaded(agentId);
+    }
   }
 
   private syncFromCronState(next: CronState) {
@@ -2792,6 +2907,15 @@ export class MindSphereApp extends LitElement {
                 >
                   Memory
                 </button>
+                <button
+                  class=${this.agentPanelTab === "context" ? "active" : ""}
+                  @click=${async () => {
+                    this.agentPanelTab = "context";
+                    await this.ensureAgentContextLoaded(this.activeAgentId);
+                  }}
+                >
+                  Context
+                </button>
               </div>
             </div>
 
@@ -2866,7 +2990,9 @@ export class MindSphereApp extends LitElement {
                 `
               : this.agentPanelTab === "permissions"
                 ? this.renderAgentPermissionsEditor()
-                : this.renderAgentMemoryEditor()}
+                : this.agentPanelTab === "memory"
+                  ? this.renderAgentMemoryEditor()
+                  : this.renderAgentContextEditor()}
             
           </div>
         </div>
