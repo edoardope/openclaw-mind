@@ -870,6 +870,8 @@ export class MindSphereApp extends LitElement {
         base: WindowState;
       } = null;
 
+  // Chat UI is multi-tab: we keep the active tab mirrored into the legacy chat* fields
+  // (so the existing controller helpers keep working), and store background tabs here.
   @state() chatLoading = false;
   @state() chatSending = false;
   @state() chatMessage = "";
@@ -878,6 +880,24 @@ export class MindSphereApp extends LitElement {
   @state() chatRunId: string | null = null;
   @state() chatStream: string | null = null;
   @state() chatStreamStartedAt: number | null = null;
+
+  @state() chatTabs: Array<{
+    id: string;
+    agentId: string;
+    sessionKey: string;
+    title: string;
+    unread: boolean;
+    chatLoading: boolean;
+    chatSending: boolean;
+    chatMessage: string;
+    chatMessages: unknown[];
+    chatThinkingLevel: string | null;
+    chatRunId: string | null;
+    chatStream: string | null;
+    chatStreamStartedAt: number | null;
+    lastError: string | null;
+  }> = [];
+  @state() chatActiveTabId: string | null = null;
 
   @state() cronLoading = false;
   @state() cronJobs: CronJob[] = [];
@@ -2209,12 +2229,10 @@ export class MindSphereApp extends LitElement {
 
   private setActiveAgent(agentId: string) {
     this.activeAgentId = agentId;
-    // Switch chat session key to this agent.
-    const sessionKey = agentId === "main" ? "agent:main:main" : `agent:${agentId}:main`;
-    this.settings = { ...this.settings, sessionKey };
-    saveSettings(this.settings);
-    // Refresh chat history in the new session.
-    void this.refreshHistory();
+
+    // NOTE: Chat is multi-tab; selecting an agent should not implicitly hijack the active chat tab.
+    // (You can open/switch chats explicitly via the Chat window / Agents list.)
+
     // Refresh cron list and agent files.
     const cron = this.toCronState();
     this.cronForm = { ...this.cronForm, agentId };
@@ -2253,6 +2271,181 @@ export class MindSphereApp extends LitElement {
     this.lastError = next.lastError;
   }
 
+  private deriveSessionKeyForAgent(agentId: string): string {
+    return agentId === "main" ? "agent:main:main" : `agent:${agentId}:main`;
+  }
+
+  private deriveAgentIdFromSessionKey(sessionKey: string): string {
+    // expected: agent:<agentId>:...
+    const m = /^agent:([^:]+):/.exec(sessionKey.trim());
+    return m?.[1] ? m[1] : "main";
+  }
+
+  private ensureChatTabsBootstrapped() {
+    if (this.chatTabs.length > 0) {
+      return;
+    }
+
+    const sessionKey = this.settings.sessionKey?.trim() || "agent:main:main";
+    const agentId = this.deriveAgentIdFromSessionKey(sessionKey);
+    const id = sessionKey;
+
+    this.chatTabs = [
+      {
+        id,
+        agentId,
+        sessionKey,
+        title: agentId,
+        unread: false,
+        chatLoading: false,
+        chatSending: false,
+        chatMessage: "",
+        chatMessages: [],
+        chatThinkingLevel: null,
+        chatRunId: null,
+        chatStream: null,
+        chatStreamStartedAt: null,
+        lastError: null,
+      },
+    ];
+    this.chatActiveTabId = id;
+  }
+
+  private persistActiveChatTabFromMirror() {
+    const activeId = this.chatActiveTabId;
+    if (!activeId) {
+      return;
+    }
+    const idx = this.chatTabs.findIndex((t) => t.id === activeId);
+    if (idx < 0) {
+      return;
+    }
+    const cur = this.chatTabs[idx];
+    const next = {
+      ...cur,
+      chatLoading: this.chatLoading,
+      chatSending: this.chatSending,
+      chatMessage: this.chatMessage,
+      chatMessages: this.chatMessages,
+      chatThinkingLevel: this.chatThinkingLevel,
+      chatRunId: this.chatRunId,
+      chatStream: this.chatStream,
+      chatStreamStartedAt: this.chatStreamStartedAt,
+      lastError: this.lastError,
+    };
+    const nextTabs = [...this.chatTabs];
+    nextTabs[idx] = next;
+    this.chatTabs = nextTabs;
+  }
+
+  private loadActiveChatMirrorFromTab() {
+    const activeId = this.chatActiveTabId;
+    if (!activeId) {
+      return;
+    }
+    const t = this.chatTabs.find((x) => x.id === activeId);
+    if (!t) {
+      return;
+    }
+
+    // Persist the active session key for refresh/reload.
+    if (t.sessionKey !== this.settings.sessionKey) {
+      this.settings = { ...this.settings, sessionKey: t.sessionKey };
+      saveSettings(this.settings);
+    }
+
+    this.chatLoading = t.chatLoading;
+    this.chatSending = t.chatSending;
+    this.chatMessage = t.chatMessage;
+    this.chatMessages = t.chatMessages;
+    this.chatThinkingLevel = t.chatThinkingLevel;
+    this.chatRunId = t.chatRunId;
+    this.chatStream = t.chatStream;
+    this.chatStreamStartedAt = t.chatStreamStartedAt;
+    this.lastError = t.lastError;
+  }
+
+  private async openChatTabForAgent(agentId: string) {
+    this.ensureChatTabsBootstrapped();
+
+    const sessionKey = this.deriveSessionKeyForAgent(agentId);
+    const existing = this.chatTabs.find((t) => t.sessionKey === sessionKey);
+    if (existing) {
+      await this.setActiveChatTab(existing.id);
+      return;
+    }
+
+    const tab = {
+      id: sessionKey,
+      agentId,
+      sessionKey,
+      title: agentId,
+      unread: false,
+      chatLoading: false,
+      chatSending: false,
+      chatMessage: "",
+      chatMessages: [],
+      chatThinkingLevel: null,
+      chatRunId: null,
+      chatStream: null,
+      chatStreamStartedAt: null,
+      lastError: null,
+    };
+
+    this.chatTabs = [...this.chatTabs, tab];
+    await this.setActiveChatTab(tab.id);
+  }
+
+  private async setActiveChatTab(tabId: string) {
+    this.ensureChatTabsBootstrapped();
+
+    // Persist any edits in the current mirror to the current tab store.
+    this.persistActiveChatTabFromMirror();
+
+    this.chatActiveTabId = tabId;
+
+    // Clear unread flag
+    const idx = this.chatTabs.findIndex((t) => t.id === tabId);
+    if (idx >= 0) {
+      const nextTabs = [...this.chatTabs];
+      nextTabs[idx] = { ...nextTabs[idx], unread: false };
+      this.chatTabs = nextTabs;
+    }
+
+    // Load mirror
+    this.loadActiveChatMirrorFromTab();
+
+    // Ensure chat window is visible.
+    if (!this.windows.chat.open) {
+      this.toggleWindow("chat");
+    } else {
+      this.bringToFront("chat");
+    }
+
+    await this.refreshHistory();
+  }
+
+  private closeChatTab(tabId: string) {
+    if (this.chatTabs.length <= 1) {
+      return;
+    }
+
+    const idx = this.chatTabs.findIndex((t) => t.id === tabId);
+    if (idx < 0) {
+      return;
+    }
+
+    const nextTabs = this.chatTabs.filter((t) => t.id !== tabId);
+    this.chatTabs = nextTabs;
+
+    if (this.chatActiveTabId === tabId) {
+      const nextActive = nextTabs[Math.max(0, idx - 1)]?.id ?? nextTabs[0]?.id ?? null;
+      this.chatActiveTabId = nextActive;
+      this.loadActiveChatMirrorFromTab();
+      void this.refreshHistory();
+    }
+  }
+
   private connect() {
     this.lastError = null;
     this.hello = null;
@@ -2270,6 +2463,9 @@ export class MindSphereApp extends LitElement {
         this.connected = true;
         this.lastError = null;
         this.hello = hello;
+        this.ensureChatTabsBootstrapped();
+        this.loadActiveChatMirrorFromTab();
+
         const st = this.toChatState();
         // normalize history load after reconnect
         st.chatRunId = null;
@@ -2305,13 +2501,69 @@ export class MindSphereApp extends LitElement {
     if (evt.event !== "chat") {
       return;
     }
-    const payload = evt.payload as ChatEventPayload | undefined;
-    const st = this.toChatState();
-    const state = handleChatEvent(st, payload);
-    this.syncFromChatState(st);
 
-    if (state === "final") {
-      void this.refreshHistory();
+    const payload = evt.payload as ChatEventPayload | undefined;
+    const sessionKey = payload?.sessionKey ?? "";
+
+    // Route events to the matching chat tab (if any). If it's the active tab,
+    // keep using the legacy chat* mirror; otherwise, update the background tab state.
+    const activeKey = this.settings.sessionKey;
+
+    if (sessionKey && sessionKey === activeKey) {
+      const st = this.toChatState();
+      const state = handleChatEvent(st, payload);
+      this.syncFromChatState(st);
+      this.persistActiveChatTabFromMirror();
+      if (state === "final") {
+        void this.refreshHistory();
+      }
+      return;
+    }
+
+    const idx = this.chatTabs.findIndex((t) => t.sessionKey === sessionKey);
+    if (idx < 0) {
+      return;
+    }
+
+    const t = this.chatTabs[idx];
+    const st = {
+      client: this.client,
+      connected: this.connected,
+      sessionKey: t.sessionKey,
+      chatLoading: t.chatLoading,
+      chatMessages: t.chatMessages,
+      chatThinkingLevel: t.chatThinkingLevel,
+      chatSending: t.chatSending,
+      chatMessage: t.chatMessage,
+      chatAttachments: [],
+      chatRunId: t.chatRunId,
+      chatStream: t.chatStream,
+      chatStreamStartedAt: t.chatStreamStartedAt,
+      lastError: t.lastError,
+    } satisfies ChatState;
+
+    const state = handleChatEvent(st, payload);
+
+    const nextTab = {
+      ...t,
+      chatLoading: st.chatLoading,
+      chatMessages: st.chatMessages,
+      chatThinkingLevel: st.chatThinkingLevel,
+      chatSending: st.chatSending,
+      chatMessage: st.chatMessage,
+      chatRunId: st.chatRunId,
+      chatStream: st.chatStream,
+      chatStreamStartedAt: st.chatStreamStartedAt,
+      lastError: st.lastError,
+      unread: true,
+    };
+
+    const nextTabs = [...this.chatTabs];
+    nextTabs[idx] = nextTab;
+    this.chatTabs = nextTabs;
+
+    if (state === "final" && this.client && this.connected) {
+      // Do not auto-refresh history for background tabs: we refresh when the tab is opened.
     }
   }
 
@@ -2345,21 +2597,51 @@ export class MindSphereApp extends LitElement {
     const msgs = Array.isArray(this.chatMessages) ? this.chatMessages : [];
     const hasAny = msgs.length > 0 || (this.chatStream && this.chatStream.trim());
 
+    const activeAgentId = this.chatActiveTabId
+      ? (this.chatTabs.find((t) => t.id === this.chatActiveTabId)?.agentId ?? "main")
+      : "main";
+
     return html`
-      <div class="chat">
-        ${!hasAny
-          ? html`<div class="emptyHint">
-              <div class="title">MindSphere</div>
-              <div class="sub">
-                Connesso all'agente <code>main</code>. Scrivi un messaggio per iniziare.
-              </div>
-              <div class="sub">
-                Suggerimenti: <span class="mini">"Riepilogami la giornata"</span> ·
-                <span class="mini">"Cosa ho in inbox?"</span> ·
-                <span class="mini">"Crea un evento"</span>
-              </div>
-            </div>`
-          : nothing}
+      <div style="display:flex; flex-direction:column; height:100%;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.08);">
+          ${this.chatTabs.map((t) => {
+            const isActive = t.id === this.chatActiveTabId;
+            return html`
+              <button
+                class="tinyBtn ${isActive ? "" : "ghostBtn"}"
+                style="height:28px; display:flex; gap:8px; align-items:center;"
+                @click=${() => void this.setActiveChatTab(t.id)}
+                title=${t.sessionKey}
+              >
+                <span>${t.title}${t.unread ? " *" : ""}</span>
+                ${this.chatTabs.length > 1
+                  ? html`<span
+                      style="opacity:0.8;"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this.closeChatTab(t.id);
+                      }}
+                    >×</span>`
+                  : nothing}
+              </button>
+            `;
+          })}
+        </div>
+
+        <div class="chat">
+          ${!hasAny
+            ? html`<div class="emptyHint">
+                <div class="title">MindSphere</div>
+                <div class="sub">
+                  Connesso all'agente <code>${activeAgentId}</code>. Scrivi un messaggio per iniziare.
+                </div>
+                <div class="sub">
+                  Suggerimenti: <span class="mini">"Riepilogami la giornata"</span> ·
+                  <span class="mini">"Cosa ho in inbox?"</span> ·
+                  <span class="mini">"Crea un evento"</span>
+                </div>
+              </div>`
+            : nothing}
 
         ${msgs.map((m) => {
           const role = (m as { role?: unknown } | null)?.role === "user" ? "user" : "assistant";
@@ -2380,6 +2662,7 @@ export class MindSphereApp extends LitElement {
               </div>
             </div>`
           : nothing}
+        </div>
       </div>
     `;
   }
@@ -2486,6 +2769,8 @@ export class MindSphereApp extends LitElement {
     this.windows = { ...this.windows, [id]: next };
 
     if (id === "chat" && nextOpen) {
+      this.ensureChatTabsBootstrapped();
+      this.loadActiveChatMirrorFromTab();
       void this.refreshHistory();
     }
     if (id === "tasks" && nextOpen) {
@@ -2843,6 +3128,16 @@ export class MindSphereApp extends LitElement {
                   </div>
                   <div style="display:flex; gap:10px; align-items:center;">
                     ${isActive ? html`<span class="mini">active</span>` : nothing}
+                    <button
+                      class="tinyBtn ghostBtn"
+                      title="Open chat tab"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        void this.openChatTabForAgent(a.id);
+                      }}
+                    >
+                      Chat
+                    </button>
                     ${canDelete
                       ? html`<button
                           class="tinyBtn ghostBtn"
@@ -2877,7 +3172,7 @@ export class MindSphereApp extends LitElement {
             <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
               <div>
                 <div class="taskName">Active agent: <code>${this.activeAgentId}</code></div>
-                <div class="mini">Session: <code>${this.settings.sessionKey}</code></div>
+                <div class="mini">Chat session: <code>${this.settings.sessionKey}</code></div>
               </div>
 
               <div class="seg">
