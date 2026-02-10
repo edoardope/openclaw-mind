@@ -47,7 +47,8 @@ export const AgentsListResultSchema = Type.Object(
 export const AgentsCreateParamsSchema = Type.Object(
   {
     name: NonEmptyString,
-    workspace: NonEmptyString,
+    // Optional: if omitted, gateway falls back to cfg.agents.defaults.workspace (or cwd).
+    workspace: Type.Optional(NonEmptyString),
     emoji: Type.Optional(Type.String()),
     avatar: Type.Optional(Type.String()),
   },
