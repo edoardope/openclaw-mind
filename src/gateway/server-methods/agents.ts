@@ -287,7 +287,13 @@ export const agentsHandlers: GatewayRequestHandlers = {
 
     const workspaceRaw = String(params.workspace ?? "").trim();
     const defaultWorkspaceRaw = String(cfg.agents?.defaults?.workspace ?? "").trim();
-    const workspaceDir = resolveUserPath(workspaceRaw || defaultWorkspaceRaw || process.cwd());
+
+    // If workspace is omitted, create a dedicated workspace under the default workspace:
+    // <defaults.workspace>/agents/<agentId>
+    const baseWorkspaceDir = resolveUserPath(defaultWorkspaceRaw || process.cwd());
+    const workspaceDir = resolveUserPath(
+      workspaceRaw || path.join(baseWorkspaceDir, "agents", agentId),
+    );
 
     // Resolve agentDir against the config we're about to persist (vs the pre-write config),
     // so subsequent resolutions can't disagree about the agent's directory.
